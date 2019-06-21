@@ -68,15 +68,16 @@ impl<'a> Lexer<'a> {
     for i in 0..hex.len() {
       match self.src.read() {
         Some(c) => {
-          // if c is larger than u8 max value,
-          // it must be invalid hex digit.
-          // we short circuit here to stop farther process
+          // c is a invalid hex digit if it's value over the u8 max 0xff.
+          // we use short-circuit here to stop farther process
           if c as u32 > 0xff {
             return None;
           } else {
-            // we cannot fully ensure c is a valid hex digit
-            // just save it and depend on the result of
-            // `u32::from_str_radix(x, 16)`
+            // we cannot fully ensure c is a valid hex digit, since
+            // the valid range [0-9a-fA-F] is a sub range of u8 [0x0-0xff],
+            // we also don't need to do overlapping check it here
+            // because we can just depend on the result of `u32::from_str_radix(x, 16)`
+            // in later process
             hex[i] = c as u8;
           }
         }
@@ -114,9 +115,10 @@ impl<'a> Lexer<'a> {
     )
   }
 
-  // use the prior read char as a barrier, passed by the formal `bs`,
-  // if bs is `\` then consider next 4 characters be a valid unicode escaping
-  // panic if next is a invalid unicode escaping
+  // uses the prior read char as a barrier which is passed by the formal `bs`,
+  // if bs is `\` then considers next 4 characters be a valid unicode escaping,
+  // tries to turn the valid unicode escaping to a char, returns the escaped char if
+  // succeed otherwise just panic
   fn read_escape_unicode(&mut self, bs: char) -> char {
     if bs == '\\' && self.src.test_ahead('u') {
       self.src.advance();
