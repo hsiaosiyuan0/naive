@@ -1,0 +1,12 @@
+[package]
+name = "naive"
+version = "0.1.0"
+authors = ["hsiaosiyuan0 <hsiaosiyuan0@outlook.com>"]
+edition = "2018"
+
+[lib]
+name = "lib"
+path = "src/lib/mod.rs"
+
+[dependencies]
+unic-ucd = "0.9.0"
