@@ -4,15 +4,15 @@ pub struct Location {
 }
 
 impl Location {
-  fn new() -> Self {
+  pub fn new() -> Self {
     Location { line: 0, column: 0 }
   }
 }
 
 pub struct Token {
-  kind: TokenKind,
-  value: String,
-  loc: Location,
+  pub kind: TokenKind,
+  pub value: String,
+  pub loc: Location,
 }
 
 pub enum TokenKind {
@@ -113,6 +113,9 @@ pub enum TokenKind {
   Protected,
   Static,
   Yield,
+
+  Identifier,
+  StringLiteral,
 }
 
 impl TokenKind {
@@ -212,6 +215,9 @@ impl TokenKind {
       TokenKind::Protected => "protected",
       TokenKind::Static => "static",
       TokenKind::Yield => "yield",
+
+      TokenKind::Identifier => "identifier",
+      TokenKind::StringLiteral => "string",
     }
   }
 }

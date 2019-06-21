@@ -31,7 +31,24 @@ fn is_id_start(c: char) -> bool {
     return true;
   }
   match c {
-    '$' | '_' => true,
+    '$' | '_' | '\\' => true,
+    _ => false,
+  }
+}
+
+fn is_id_part(c: char) -> bool {
+  if is_id_start(c) {
+    return true;
+  }
+  let cc = c as u32;
+  if cc == 0x200c || cc == 0x200d {
+    return true;
+  }
+  match GeneralCategory::of(c) {
+    GeneralCategory::NonspacingMark
+    | GeneralCategory::SpacingMark
+    | GeneralCategory::DecimalNumber
+    | GeneralCategory::ConnectorPunctuation => true,
     _ => false,
   }
 }
@@ -46,11 +63,7 @@ impl<'a> Lexer<'a> {
     self.read_name()
   }
 
-  pub fn read_unicode_escape_seq(&mut self) -> Option<char> {
-    if !self.src.test_ahead2('\\', 'u') {
-      return None;
-    }
-    self.src.advance2();
+  fn read_unicode_escape_seq(&mut self) -> Option<char> {
     let mut hex = [0, 0, 0, 0];
     for i in 0..hex.len() {
       match self.src.read() {
@@ -80,8 +93,62 @@ impl<'a> Lexer<'a> {
     }
   }
 
+  fn ahead_is_id_start(&mut self) -> bool {
+    match self.src.peek() {
+      Some(c) => is_id_start(c),
+      _ => false,
+    }
+  }
+
+  fn ahead_is_id_part(&mut self) -> bool {
+    match self.src.peek() {
+      Some(c) => is_id_part(c),
+      _ => false,
+    }
+  }
+
+  fn errmsg(&self) -> String {
+    format!(
+      "Unexpected char at line: {} column: {}",
+      self.src.line, self.src.column
+    )
+  }
+
+  // use the prior read char as a barrier, passed by the formal `bs`,
+  // if bs is `\` then consider next 4 characters be a valid unicode escaping
+  // panic if next is a invalid unicode escaping
+  fn read_escape_unicode(&mut self, bs: char) -> char {
+    if bs == '\\' && self.src.test_ahead('u') {
+      self.src.advance();
+      match self.read_unicode_escape_seq() {
+        Some(ec) => ec,
+        _ => panic!(self.errmsg()),
+      }
+    } else {
+      bs
+    }
+  }
+
   pub fn read_name(&mut self) -> Option<Token> {
-    None
+    if !self.ahead_is_id_start() {
+      return None;
+    }
+    let mut c = self.src.read().unwrap();
+    c = self.read_escape_unicode(c);
+    let mut val = vec![c];
+    loop {
+      if self.ahead_is_id_part() {
+        c = self.src.read().unwrap();
+        val.push(self.read_escape_unicode(c));
+      } else {
+        break;
+      }
+    }
+    Some(Token {
+      kind: TokenKind::Identifier,
+      value: val.iter().collect(),
+      loc: Location::new(),
+    })
   }
 
   fn skip_comment_single(&mut self) {
@@ -172,8 +239,26 @@ mod lexer_tests {
     let code = String::from("\\u01c5\\u0920\\u1x23");
     let src = Source::new(&code);
     let mut lex = Lexer::new(src);
+    lex.src.advance2();
     assert_eq!('\u{01c5}', lex.read_unicode_escape_seq().unwrap());
+    lex.src.advance2();
     assert_eq!('\u{0920}', lex.read_unicode_escape_seq().unwrap());
+    lex.src.advance2();
     assert_eq!(None, lex.read_unicode_escape_seq());
+  }
+
+  #[test]
+  fn read_name() {
+    let code = String::from("\\u01c5\\u0920 a aᢅ");
+    let src = Source::new(&code);
+    let mut lex = Lexer::new(src);
+    let mut tok = lex.read_name().unwrap();
+    assert_eq!("\u{01c5}\u{0920}", tok.value);
+    lex.skip_whitespace();
+    tok = lex.read_name().unwrap();
+    assert_eq!("a", tok.value);
+    lex.skip_whitespace();
+    tok = lex.read_name().unwrap();
+    assert_eq!("a\u{1885}", tok.value);
   }
 }
