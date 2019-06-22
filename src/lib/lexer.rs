@@ -9,6 +9,16 @@ pub struct Lexer<'a> {
   src: Source<'a>,
 }
 
+pub struct LexError {
+  msg: String,
+}
+
+impl LexError {
+  fn new(msg: String) -> Self {
+    LexError { msg }
+  }
+}
+
 fn is_whitespace(c: char) -> bool {
   !is_line_terminator(c) && c.is_whitespace()
 }
@@ -152,6 +162,137 @@ impl<'a> Lexer<'a> {
     })
   }
 
+  fn read_decimal_digits(&mut self) -> String {
+    let mut ret = String::new();
+    loop {
+      if let Some(c) = self.src.peek() {
+        if c.is_ascii_digit() {
+          ret.push(self.src.read().unwrap());
+          continue;
+        }
+      }
+      break;
+    }
+    ret
+  }
+
+  fn read_exponent(&mut self) -> Result<String, LexError> {
+    let mut ret = String::new();
+    // consume e|E
+    ret.push(self.src.read().unwrap());
+    if let Some(c) = self.src.peek() {
+      if c == '+' || c == '-' {
+        ret.push(self.src.read().unwrap());
+      }
+      let digits = self.read_decimal_digits();
+      if digits.is_empty() {
+        return Err(LexError::new(self.errmsg()));
+      } else {
+        ret.push_str(digits.as_str());
+      }
+    }
+    Ok(ret)
+  }
+
+  fn read_decimal_int_part(&mut self) -> String {
+    let mut ret = String::new();
+    let c = self.src.read().unwrap();
+    ret.push(c);
+    if c == '0' {
+      return ret;
+    }
+    ret.push_str(self.read_decimal_digits().as_str());
+    ret
+  }
+
+  fn read_decimal(&mut self) -> Result<String, LexError> {
+    let mut c = self.src.peek().unwrap();
+    let mut ret = String::new();
+    let digits_opt = c != '.';
+    if c.is_ascii_digit() {
+      ret.push_str(self.read_decimal_int_part().as_str());
+    }
+    // here we process the fractional part
+    // if decimal starts with dot then next digits is required to be present
+    // if decimal starts non-zero digit then the digits in fractional part is optional
+    if self.src.test_ahead('.') {
+      ret.push(self.src.read().unwrap());
+      let digits = self.read_decimal_digits();
+      if digits.is_empty() && !digits_opt {
+        return Err(LexError::new(self.errmsg()));
+      }
+      ret.push_str(digits.as_str());
+    }
+    if self.src.test_ahead_or('e', 'E') {
+      match self.read_exponent() {
+        Ok(s) => ret.push_str(s.as_str()),
+        Err(e) => return Err(e),
+      }
+    }
+
+    Ok(ret)
+  }
+
+  fn read_hex(&mut self) -> Result<String, LexError> {
+    let mut ret = String::new();
+    ret.push(self.src.read().unwrap());
+    ret.push(self.src.read().unwrap());
+    let mut digits = vec![];
+    loop {
+      match self.src.peek() {
+        Some(c) => {
+          if c.is_ascii_hexdigit() {
+            digits.push(self.src.read().unwrap());
+          } else {
+            break;
+          }
+        }
+        _ => break,
+      }
+    }
+    if digits.len() == 0 {
+      Err(LexError::new(self.errmsg()))
+    } else {
+      let digits: String = digits.iter().collect();
+      ret.push_str(digits.as_str());
+      Ok(ret)
+    }
+  }
+
+  fn ahead_is_decimal_int(&mut self) -> bool {
+    if let Some(c) = self.src.peek() {
+      c != '0' && c.is_ascii_digit() || c == '.'
+    } else {
+      false
+    }
+  }
+
+  pub fn read_numeric(&mut self) -> Result<Token, LexError> {
+    let value: Result<String, LexError>;
+    let mut is_hex = false;
+    if self.src.test_ahead('0') {
+      if let Some(c) = self.src.chs.next() {
+        self.src.peeked.push_back(c);
+        if c == 'x' || c == 'X' {
+          is_hex = true;
+        }
+      }
+    }
+    if is_hex {
+      value = self.read_hex();
+    } else {
+      value = self.read_decimal();
+    }
+    match value {
+      Ok(v) => Ok(Token {
+        kind: TokenKind::NumericLiteral,
+        value: v,
+        loc: Location::new(),
+      }),
+      Err(e) => Err(e),
+    }
+  }
+
   fn skip_comment_single(&mut self) {
     self.src.advance2();
     loop {
@@ -262,4 +403,46 @@ mod lexer_tests {
     tok = lex.read_name().unwrap();
     assert_eq!("a\u{1885}", tok.value);
   }
+
+  #[test]
+  fn read_decimal() {
+    let code = String::from("1 .1e1 1.e1 1.e+1 .1e-1");
+    let src = Source::new(&code);
+    let mut lex = Lexer::new(src);
+    let mut val = lex.read_decimal().ok().unwrap();
+    assert_eq!("1", val);
+    lex.skip_whitespace();
+    val = lex.read_decimal().ok().unwrap();
+    assert_eq!(".1e1", val);
+    lex.skip_whitespace();
+    val = lex.read_decimal().ok().unwrap();
+    assert_eq!("1.e1", val);
+    lex.skip_whitespace();
+    val = lex.read_decimal().ok().unwrap();
+    assert_eq!("1.e+1", val);
+    lex.skip_whitespace();
+    val = lex.read_decimal().ok().unwrap();
+    assert_eq!(".1e-1", val);
+  }
+
+  #[test]
+  fn read_numeric() {
+    let code = String::from("1 .1e1 0xa1 0X123");
+    let src = Source::new(&code);
+    let mut lex = Lexer::new(src);
+    let mut tok = lex.read_numeric().ok().unwrap();
+    assert_eq!("1", tok.value);
+    lex.skip_whitespace();
+    tok = lex.read_numeric().ok().unwrap();
+    assert_eq!(".1e1", tok.value);
+    lex.skip_whitespace();
+    tok = lex.read_numeric().ok().unwrap();
+    assert_eq!("0xa1", tok.value);
+    lex.skip_whitespace();
+    tok = lex.read_numeric().ok().unwrap();
+    assert_eq!("0X123", tok.value);
+  }
+
+  #[test]
+  fn read_hex() {}
 }

@@ -2,8 +2,8 @@ use std::collections::VecDeque;
 use std::str::Chars;
 
 pub struct Source<'a> {
-  chs: Chars<'a>,
-  peeked: VecDeque<char>,
+  pub chs: Chars<'a>,
+  pub peeked: VecDeque<char>,
   pub line: i32,
   pub column: i32,
 }
@@ -75,6 +75,13 @@ impl<'a> Source<'a> {
   pub fn test_ahead(&mut self, ch: char) -> bool {
     match self.peek() {
       Some(c) => c == ch,
+      _ => false,
+    }
+  }
+
+  pub fn test_ahead_or(&mut self, c1: char, c2: char) -> bool {
+    match self.peek() {
+      Some(c) => c == c1 || c == c2,
       _ => false,
     }
   }

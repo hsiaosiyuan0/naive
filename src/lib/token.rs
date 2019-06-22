@@ -116,6 +116,7 @@ pub enum TokenKind {
 
   Identifier,
   StringLiteral,
+  NumericLiteral,
 }
 
 impl TokenKind {
@@ -218,6 +219,7 @@ impl TokenKind {
 
       TokenKind::Identifier => "identifier",
       TokenKind::StringLiteral => "string",
+      TokenKind::NumericLiteral => "numeric",
     }
   }
 }
