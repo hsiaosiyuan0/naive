@@ -63,31 +63,51 @@ fn is_id_part(c: char) -> bool {
   }
 }
 
+fn is_single_escape_ch(c: char) -> bool {
+  match c {
+    '\'' | '"' | '\\' | 'b' | 'f' | 'n' | 'r' | 't' | 'v' => true,
+    _ => false,
+  }
+}
+
+fn escape_ch(c: char) -> char {
+  match c {
+    '\'' => '\'',
+    '"' => '"',
+    '\\' => '\\',
+    'b' => '\x08',
+    'f' => '\x0c',
+    'n' => '\x0a',
+    'r' => '\x0d',
+    't' => '\x09',
+    'v' => '\x0b',
+    _ => panic!(),
+  }
+}
+
+fn is_non_escape_ch(c: char) -> bool {
+  !is_single_escape_ch(c) && !is_line_terminator(c) && !c.is_ascii_digit() && c != 'x' && c != 'u'
+}
+
 impl<'a> Lexer<'a> {
   pub fn new(src: Source<'a>) -> Self {
     Lexer { src }
   }
 
-  pub fn next(&mut self) -> Option<Token> {
-    self.skip_whitespace();
-    self.read_name()
-  }
+  //  pub fn next(&mut self) -> Option<Token> {
+  //    self.skip_whitespace();
+  //    self.read_name()
+  //  }
 
   fn read_unicode_escape_seq(&mut self) -> Option<char> {
     let mut hex = [0, 0, 0, 0];
     for i in 0..hex.len() {
       match self.src.read() {
         Some(c) => {
-          // c is a invalid hex digit if it's value over the u8 max 0xff.
-          // we use short-circuit here to stop farther process
-          if c as u32 > 0xff {
-            return None;
-          } else {
-            // we cannot fully ensure c is a valid hex digit, since
-            // the valid range [0-9a-fA-F] is a sub range of u8 [0x0-0xff],
-            // we also don't need to do overlapping check here, because we can
-            // just depend on the result of `u32::from_str_radix(x, 16)` in later process
+          if c.is_ascii_hexdigit() {
             hex[i] = c as u8;
+          } else {
+            return None;
           }
         }
         _ => return None,
@@ -127,35 +147,38 @@ impl<'a> Lexer<'a> {
   // we use the prior read char as a barrier which is passed by the formal parameter `bs`,
   // if bs is `\` then we can consider the next 4 characters must be a valid unicode escaping,
   // we try to turn the valid unicode escaping to a char then return the escaped char if the turning
-  // is succeed otherwise we just panic the process
-  fn read_escape_unicode(&mut self, bs: char) -> char {
+  // is succeed otherwise a lexer error is returned
+  fn read_escape_unicode(&mut self, bs: char) -> Result<char, LexError> {
     if bs == '\\' && self.src.test_ahead('u') {
       self.src.advance();
       match self.read_unicode_escape_seq() {
-        Some(ec) => ec,
-        _ => panic!(self.errmsg()),
+        Some(ec) => Ok(ec),
+        _ => Err(LexError::new(self.errmsg())),
       }
     } else {
-      bs
+      Ok(bs)
     }
   }
 
-  pub fn read_name(&mut self) -> Option<Token> {
-    if !self.ahead_is_id_start() {
-      return None;
-    }
+  pub fn read_name(&mut self) -> Result<Token, LexError> {
     let mut c = self.src.read().unwrap();
-    c = self.read_escape_unicode(c);
+    match self.read_escape_unicode(c) {
+      Ok(cc) => c = cc,
+      Err(e) => return Err(e),
+    }
     let mut val = vec![c];
     loop {
       if self.ahead_is_id_part() {
         c = self.src.read().unwrap();
-        val.push(self.read_escape_unicode(c));
+        match self.read_escape_unicode(c) {
+          Ok(cc) => val.push(cc),
+          Err(e) => return Err(e),
+        }
       } else {
         break;
       }
     }
-    Some(Token {
+    Ok(Token {
       kind: TokenKind::Identifier,
       value: val.iter().collect(),
       loc: Location::new(),
@@ -293,6 +316,87 @@ impl<'a> Lexer<'a> {
     }
   }
 
+  fn read_string_escape_seq(&mut self) -> Result<Option<char>, LexError> {
+    self.src.advance(); // consume `\`
+    match self.src.read() {
+      Some(mut c) => {
+        if is_single_escape_ch(c) {
+          c = escape_ch(c);
+        } else if c == '0' {
+          c = '\0';
+          // 0 [lookahead ∉ DecimalDigit]
+          if let Some(c) = self.src.peek() {
+            if c.is_ascii_digit() {
+              return Err(LexError::new(self.errmsg()));
+            }
+          }
+        } else if c == 'x' {
+          let mut hex = [0, 0];
+          for i in 0..hex.len() {
+            if let Some(cc) = self.src.read() {
+              if cc.is_ascii_hexdigit() {
+                hex[i] = cc as u8;
+                continue;
+              }
+            }
+            return Err(LexError::new(self.errmsg()));
+          }
+          // we already check each char is a valid hex digit
+          // so the entire hex digits can be safely converted to u32
+          let hex = str::from_utf8(&hex).unwrap();
+          c = char::from_u32(u32::from_str_radix(hex, 16).ok().unwrap()).unwrap()
+        } else if c == 'u' {
+          match self.read_unicode_escape_seq() {
+            Some(ec) => c = ec,
+            _ => return Err(LexError::new(self.errmsg())),
+          }
+        } else if is_line_terminator(c) {
+          // <CR> [lookahead ∉ <LF> ]
+          if c == '\r' && self.src.test_ahead('\n') {
+            self.src.advance();
+            return Err(LexError::new(self.errmsg()));
+          }
+          // here we meet the line continuation symbol, just remove it from source stream
+          return Ok(None);
+        } else if is_non_escape_ch(c) {
+          // do nothing
+        } else {
+          return Err(LexError::new(self.errmsg()));
+        }
+        Ok(Some(c))
+      }
+      _ => Err(LexError::new(self.errmsg())),
+    }
+  }
+
+  fn read_string(&mut self, t: char) -> Result<Token, LexError> {
+    let mut ret = String::new();
+    loop {
+      match self.src.peek() {
+        Some(c) => {
+          if c == t {
+            self.src.advance();
+            break;
+          } else if c == '\\' {
+            match self.read_string_escape_seq() {
+              Ok(Some(c)) => ret.push(c),
+              Err(e) => return Err(e),
+              _ => (),
+            }
+          } else {
+            ret.push(self.src.read().unwrap());
+          }
+        }
+        _ => break,
+      }
+    }
+    Ok(Token {
+      kind: TokenKind::StringLiteral,
+      value: ret,
+      loc: Location::new(),
+    })
+  }
+
   fn skip_comment_single(&mut self) {
     self.src.advance2();
     loop {
@@ -394,13 +498,13 @@ mod lexer_tests {
     let code = String::from("\\u01c5\\u0920 a aᢅ");
     let src = Source::new(&code);
     let mut lex = Lexer::new(src);
-    let mut tok = lex.read_name().unwrap();
+    let mut tok = lex.read_name().ok().unwrap();
     assert_eq!("\u{01c5}\u{0920}", tok.value);
     lex.skip_whitespace();
-    tok = lex.read_name().unwrap();
+    tok = lex.read_name().ok().unwrap();
     assert_eq!("a", tok.value);
     lex.skip_whitespace();
-    tok = lex.read_name().unwrap();
+    tok = lex.read_name().ok().unwrap();
     assert_eq!("a\u{1885}", tok.value);
   }
 
@@ -444,5 +548,17 @@ mod lexer_tests {
   }
 
   #[test]
-  fn read_hex() {}
+  fn read_string() {
+    let code = String::from("'hello world' \"hello \\\n\\u4E16\\u754C\"");
+    let src = Source::new(&code);
+    let mut lex = Lexer::new(src);
+    lex.src.advance();
+    let mut tok = lex.read_string('\'').ok().unwrap();
+    assert_eq!("hello world", tok.value);
+
+    lex.skip_whitespace();
+    lex.src.advance();
+    tok = lex.read_string('"').ok().unwrap();
+    assert_eq!("hello 世界", tok.value);
+  }
 }
