@@ -1,3 +1,6 @@
+use std::collections::HashSet;
+use std::sync::{Once, ONCE_INIT};
+
 pub struct Location {
   pub line: i32,
   pub column: i32,
@@ -119,6 +122,139 @@ pub enum TokenKind {
   NumericLiteral,
 }
 
+static mut SYMBOLS: Option<HashSet<&'static str>> = None;
+static SYMBOLS_INIT: Once = ONCE_INIT;
+pub fn is_symbol(s: &str) -> bool {
+  unsafe {
+    SYMBOLS_INIT.call_once(|| {
+      SYMBOLS = Some({
+        let mut set = HashSet::new();
+        set.insert("{");
+        set.insert("}");
+        set.insert("(");
+        set.insert(")");
+        set.insert("[");
+        set.insert("]");
+        set.insert(".");
+        set.insert(";");
+        set.insert(",");
+        set.insert("<");
+        set.insert(">");
+        set.insert("<=");
+        set.insert(">=");
+        set.insert("==");
+        set.insert("!=");
+        set.insert("===");
+        set.insert("!==");
+        set.insert("+");
+        set.insert("-");
+        set.insert("*");
+        set.insert("/");
+        set.insert("%");
+        set.insert("++");
+        set.insert("--");
+        set.insert("<<");
+        set.insert(">>");
+        set.insert("<<<");
+        set.insert("&");
+        set.insert("|");
+        set.insert("^");
+        set.insert("!");
+        set.insert("~");
+        set.insert("&&");
+        set.insert("||");
+        set.insert("?");
+        set.insert(":");
+        set.insert("=");
+        set.insert("+=");
+        set.insert("-=");
+        set.insert("*=");
+        set.insert("/=");
+        set.insert("%=");
+        set.insert("<<=");
+        set.insert(">>=");
+        set.insert(">>>=");
+        set.insert("&=");
+        set.insert("!=");
+        set.insert("^=");
+        set
+      })
+    });
+    SYMBOLS.as_ref().unwrap().contains(s)
+  }
+}
+
+static mut KEYWORDS: Option<HashSet<&'static str>> = None;
+static KEYWORDS_INIT: Once = ONCE_INIT;
+pub fn is_keyword(s: &str) -> bool {
+  unsafe {
+    KEYWORDS_INIT.call_once(|| {
+      KEYWORDS = Some({
+        let mut set = HashSet::new();
+        set.insert("break");
+        set.insert("do");
+        set.insert("instanceof");
+        set.insert("typeof");
+        set.insert("case");
+        set.insert("else");
+        set.insert("new");
+        set.insert("var");
+        set.insert("catch");
+        set.insert("finally");
+        set.insert("return");
+        set.insert("void");
+        set.insert("continue");
+        set.insert("for");
+        set.insert("switch");
+        set.insert("while");
+        set.insert("debugger");
+        set.insert("function");
+        set.insert("this");
+        set.insert("with");
+        set.insert("default");
+        set.insert("if");
+        set.insert("throw");
+        set.insert("delete");
+        set.insert("in");
+        set.insert("try");
+        // future reserved words
+        set.insert("class");
+        set.insert("enum");
+        set.insert("extends");
+        set.insert("super");
+        set.insert("const");
+        set.insert("export");
+        set.insert("import");
+        set
+      })
+    });
+    KEYWORDS.as_ref().unwrap().contains(s)
+  }
+}
+
+static mut CONTEXTUAL_KEYWORDS: Option<HashSet<&'static str>> = None;
+static CONTEXTUAL_KEYWORDS_INIT: Once = ONCE_INIT;
+pub fn is_contextual_keyword(s: &str) -> bool {
+  unsafe {
+    CONTEXTUAL_KEYWORDS_INIT.call_once(|| {
+      CONTEXTUAL_KEYWORDS = Some({
+        let mut set = HashSet::new();
+        set.insert("implements");
+        set.insert("let");
+        set.insert("private");
+        set.insert("public");
+        set.insert("interface");
+        set.insert("package");
+        set.insert("protected");
+        set.insert("static");
+        set.insert("yield");
+        set
+      })
+    });
+    CONTEXTUAL_KEYWORDS.as_ref().unwrap().contains(s)
+  }
+}
+
 impl TokenKind {
   fn name(&self) -> &'static str {
     match self {
@@ -233,5 +369,12 @@ mod token_tests {
     assert_eq!("{", TokenKind::BraceL.name());
     assert_eq!("}", TokenKind::BraceR.name());
     assert_eq!("yield", TokenKind::Yield.name());
+  }
+
+  #[test]
+  fn static_set() {
+    assert!(is_symbol("{"));
+    assert!(is_keyword("break"));
+    assert!(is_contextual_keyword("let"));
   }
 }

@@ -229,7 +229,7 @@ impl<'a> Lexer<'a> {
   }
 
   fn read_decimal(&mut self) -> Result<String, LexError> {
-    let mut c = self.src.peek().unwrap();
+    let c = self.src.peek().unwrap();
     let mut ret = String::new();
     let digits_opt = c != '.';
     if c.is_ascii_digit() {
