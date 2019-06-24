@@ -1,4 +1,5 @@
-use std::collections::HashSet;
+use core::borrow::Borrow;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Once, ONCE_INIT};
 
 pub struct Location {
@@ -12,14 +13,131 @@ impl Location {
   }
 }
 
-pub struct Token {
-  pub kind: TokenKind,
-  pub value: String,
+pub struct KeywordData {
+  pub kind: Keyword,
   pub loc: Location,
 }
+#[derive(Eq, PartialEq, Hash)]
+pub enum Keyword {
+  Break,
+  Do,
+  Instanceof,
+  Typeof,
+  Case,
+  Else,
+  New,
+  Var,
+  Catch,
+  Finally,
+  Return,
+  Void,
+  Continue,
+  For,
+  Switch,
+  While,
+  Debugger,
+  Function,
+  This,
+  With,
+  Default,
+  If,
+  Throw,
+  Delete,
+  In,
+  Try,
+  // future reserved words
+  Class,
+  Enum,
+  Extends,
+  Super,
+  Const,
+  Export,
+  Import,
+}
 
-pub enum TokenKind {
-  // punctuator
+macro_rules! gen_map {
+  ($($k:expr => $v:expr)*) => {
+    {
+      let mut s = HashSet::new();
+      $(
+        s.insert($v);
+      )*
+      let mut kv = HashMap::new();
+      $(
+        kv.insert($k, $v);
+      )*
+      let mut vk = HashMap::new();
+      $(
+        vk.insert($v, $k);
+      )*
+      (Some(s), Some(kv), Some(vk))
+    }
+  };
+}
+
+static mut KEYWORDS_SET: Option<HashSet<&'static str>> = None;
+static mut KEYWORDS_KEY_NAME: Option<HashMap<Keyword, &'static str>> = None;
+static mut KEYWORDS_NAME_KEY: Option<HashMap<&'static str, Keyword>> = None;
+fn init_keywords() {
+  unsafe {
+    let (s, kv, vk) = gen_map! {
+      Keyword::Break => "break"
+      Keyword::Do => "do"
+      Keyword::Instanceof => "instanceof"
+      Keyword::Typeof => "typeof"
+      Keyword::Case => "case"
+      Keyword::Else => "else"
+      Keyword::New => "new"
+      Keyword::Var => "var"
+      Keyword::Catch => "catch"
+      Keyword::Finally => "finally"
+      Keyword::Return => "return"
+      Keyword::Void => "void"
+      Keyword::Continue => "continue"
+      Keyword::For => "for"
+      Keyword::Switch => "switch"
+      Keyword::While => "while"
+      Keyword::Debugger => "debugger"
+      Keyword::Function => "function"
+      Keyword::This => "this"
+      Keyword::With => "with"
+      Keyword::Default => "default"
+      Keyword::If => "if"
+      Keyword::Throw => "throw"
+      Keyword::Delete => "delete"
+      Keyword::In => "in"
+      Keyword::Try => "try"
+      // future reserved words
+      Keyword::Class => "class"
+      Keyword::Enum => "enum"
+      Keyword::Extends => "extends"
+      Keyword::Super => "super"
+      Keyword::Const => "const"
+      Keyword::Export => "export"
+      Keyword::Import => "import"
+    };
+    KEYWORDS_SET = s;
+    KEYWORDS_KEY_NAME = kv;
+    KEYWORDS_NAME_KEY = vk;
+  }
+}
+fn is_keyword(s: &str) -> bool {
+  unsafe { KEYWORDS_SET.as_ref().unwrap().contains(s) }
+}
+fn keyword_to_name(v: &Keyword) -> &'static str {
+  unsafe { KEYWORDS_KEY_NAME.as_ref().unwrap().get(v).unwrap() }
+}
+fn name_to_keyword(s: &str) -> &Keyword {
+  unsafe { KEYWORDS_NAME_KEY.as_ref().unwrap().get(s).unwrap() }
+}
+impl Keyword {
+  pub fn name(&self) -> &'static str {
+    keyword_to_name(self)
+  }
+}
+
+#[derive(Eq, PartialEq, Hash)]
+pub enum Symbol {
   BraceL,
   BraceR,
   ParenL,
@@ -68,45 +186,89 @@ pub enum TokenKind {
   AssignBitAnd,
   AssignBitOr,
   AssignBitXor,
+}
+pub struct SymbolData {
+  pub kind: Symbol,
+  pub loc: Location,
+}
 
-  // keywords
-  Break,
-  Do,
-  Instanceof,
-  Typeof,
-  Case,
-  Else,
-  New,
-  Var,
-  Catch,
-  Finally,
-  Return,
-  Void,
-  Continue,
-  For,
-  Switch,
-  While,
-  Debugger,
-  Function,
-  This,
-  With,
-  Default,
-  If,
-  Throw,
-  Delete,
-  In,
-  Try,
+static mut SYMBOLS_SET: Option<HashSet<&'static str>> = None;
+static mut SYMBOLS_KEY_NAME: Option<HashMap<Symbol, &'static str>> = None;
+static mut SYMBOLS_NAME_KEY: Option<HashMap<&'static str, Symbol>> = None;
+fn init_symbols() {
+  unsafe {
+    let (s, kv, vk) = gen_map! {
+      Symbol::BraceL => "{"
+      Symbol::BraceR => "}"
+      Symbol::ParenL => "("
+      Symbol::ParenR => ")"
+      Symbol::BracketL => "["
+      Symbol::BracketR => "]"
+      Symbol::Dot => "."
+      Symbol::Semi => ";"
+      Symbol::Comma => ""
+      Symbol::LT => "<"
+      Symbol::GT => ">"
+      Symbol::LE => "<="
+      Symbol::GE => ">="
+      Symbol::Eq => "=="
+      Symbol::NotEq => "!="
+      Symbol::EqStrict => "==="
+      Symbol::NotEqStrict => "!=="
+      Symbol::Add => "+"
+      Symbol::Sub => "-"
+      Symbol::Mul => "*"
+      Symbol::Div => "/"
+      Symbol::Mod => "%"
+      Symbol::Inc => "++"
+      Symbol::Dec => "--"
+      Symbol::SHL => "<<"
+      Symbol::SAR => ">>"
+      Symbol::SHR => ">>>"
+      Symbol::BitAnd => "&"
+      Symbol::BitOr => "|"
+      Symbol::BitXor => "^"
+      Symbol::Not => "!"
+      Symbol::BitNot => "~"
+      Symbol::And => "&&"
+      Symbol::Or => "||"
+      Symbol::Conditional => "?"
+      Symbol::Colon => ":"
+      Symbol::Assign => "="
+      Symbol::AssignAdd => "+="
+      Symbol::AssignSub => "-="
+      Symbol::AssignMul => "*="
+      Symbol::AssignDiv => "/="
+      Symbol::AssignMod => "%="
+      Symbol::AssignSHL => "<<="
+      Symbol::AssignSAR => ">>="
+      Symbol::AssignSHR => ">>>="
+      Symbol::AssignBitAnd => "&="
+      Symbol::AssignBitOr => "|="
+      Symbol::AssignBitXor => "^="
+    };
+    SYMBOLS_SET = s;
+    SYMBOLS_KEY_NAME = kv;
+    SYMBOLS_NAME_KEY = vk;
+  }
+}
+fn is_symbol(s: &str) -> bool {
+  unsafe { SYMBOLS_SET.as_ref().unwrap().contains(s) }
+}
+fn symbol_to_name(v: &Symbol) -> &'static str {
+  unsafe { SYMBOLS_KEY_NAME.as_ref().unwrap().get(v).unwrap() }
+}
+fn name_to_symbol(s: &str) -> &Symbol {
+  unsafe { SYMBOLS_NAME_KEY.as_ref().unwrap().get(s).unwrap() }
+}
+impl Symbol {
+  pub fn name(&self) -> &'static str {
+    symbol_to_name(self)
+  }
+}
 
-  // future reserved words
-  Class,
-  Enum,
-  Extends,
-  Super,
-  Const,
-  Export,
-  Import,
-
-  // contextual future-reserved-words
+#[derive(Eq, PartialEq, Hash)]
+pub enum ContextualKeyword {
   Implements,
   Let,
   Private,
@@ -116,248 +278,113 @@ pub enum TokenKind {
   Protected,
   Static,
   Yield,
-
-  Identifier,
-  StringLiteral,
-  NumericLiteral,
+}
+pub struct ContextualKeywordData {
+  pub kind: Symbol,
+  pub loc: Location,
 }
 
-static mut SYMBOLS: Option<HashSet<&'static str>> = None;
-static SYMBOLS_INIT: Once = ONCE_INIT;
-pub fn is_symbol(s: &str) -> bool {
+static mut CONTEXTUAL_KEYWORD_SET: Option<HashSet<&'static str>> = None;
+static mut CONTEXTUAL_KEYWORD_KEY_NAME: Option<HashMap<ContextualKeyword, &'static str>> = None;
+static mut CONTEXTUAL_KEYWORD_NAME_KEY: Option<HashMap<&'static str, ContextualKeyword>> = None;
+fn init_contextual_keyword() {
   unsafe {
-    SYMBOLS_INIT.call_once(|| {
-      SYMBOLS = Some({
-        let mut set = HashSet::new();
-        set.insert("{");
-        set.insert("}");
-        set.insert("(");
-        set.insert(")");
-        set.insert("[");
-        set.insert("]");
-        set.insert(".");
-        set.insert(";");
-        set.insert(",");
-        set.insert("<");
-        set.insert(">");
-        set.insert("<=");
-        set.insert(">=");
-        set.insert("==");
-        set.insert("!=");
-        set.insert("===");
-        set.insert("!==");
-        set.insert("+");
-        set.insert("-");
-        set.insert("*");
-        set.insert("/");
-        set.insert("%");
-        set.insert("++");
-        set.insert("--");
-        set.insert("<<");
-        set.insert(">>");
-        set.insert("<<<");
-        set.insert("&");
-        set.insert("|");
-        set.insert("^");
-        set.insert("!");
-        set.insert("~");
-        set.insert("&&");
-        set.insert("||");
-        set.insert("?");
-        set.insert(":");
-        set.insert("=");
-        set.insert("+=");
-        set.insert("-=");
-        set.insert("*=");
-        set.insert("/=");
-        set.insert("%=");
-        set.insert("<<=");
-        set.insert(">>=");
-        set.insert(">>>=");
-        set.insert("&=");
-        set.insert("!=");
-        set.insert("^=");
-        set
-      })
-    });
-    SYMBOLS.as_ref().unwrap().contains(s)
+    let (s, kv, vk) = gen_map! {
+      ContextualKeyword::Implements => "implements"
+      ContextualKeyword::Let => "let"
+      ContextualKeyword::Private => "private"
+      ContextualKeyword::Public => "public"
+      ContextualKeyword::Interface => "interface"
+      ContextualKeyword::Package => "package"
+      ContextualKeyword::Protected => "protected"
+      ContextualKeyword::Static => "static"
+      ContextualKeyword::Yield => "yield"
+
+    };
+    CONTEXTUAL_KEYWORD_SET = s;
+    CONTEXTUAL_KEYWORD_KEY_NAME = kv;
+    CONTEXTUAL_KEYWORD_NAME_KEY = vk;
   }
 }
-
-static mut KEYWORDS: Option<HashSet<&'static str>> = None;
-static KEYWORDS_INIT: Once = ONCE_INIT;
-pub fn is_keyword(s: &str) -> bool {
+fn is_contextual_keyword(s: &str) -> bool {
+  unsafe { CONTEXTUAL_KEYWORD_SET.as_ref().unwrap().contains(s) }
+}
+fn contextual_keyword_to_name(v: &ContextualKeyword) -> &'static str {
   unsafe {
-    KEYWORDS_INIT.call_once(|| {
-      KEYWORDS = Some({
-        let mut set = HashSet::new();
-        set.insert("break");
-        set.insert("do");
-        set.insert("instanceof");
-        set.insert("typeof");
-        set.insert("case");
-        set.insert("else");
-        set.insert("new");
-        set.insert("var");
-        set.insert("catch");
-        set.insert("finally");
-        set.insert("return");
-        set.insert("void");
-        set.insert("continue");
-        set.insert("for");
-        set.insert("switch");
-        set.insert("while");
-        set.insert("debugger");
-        set.insert("function");
-        set.insert("this");
-        set.insert("with");
-        set.insert("default");
-        set.insert("if");
-        set.insert("throw");
-        set.insert("delete");
-        set.insert("in");
-        set.insert("try");
-        // future reserved words
-        set.insert("class");
-        set.insert("enum");
-        set.insert("extends");
-        set.insert("super");
-        set.insert("const");
-        set.insert("export");
-        set.insert("import");
-        set
-      })
-    });
-    KEYWORDS.as_ref().unwrap().contains(s)
+    CONTEXTUAL_KEYWORD_KEY_NAME
+      .as_ref()
+      .unwrap()
+      .get(v)
+      .unwrap()
   }
 }
-
-static mut CONTEXTUAL_KEYWORDS: Option<HashSet<&'static str>> = None;
-static CONTEXTUAL_KEYWORDS_INIT: Once = ONCE_INIT;
-pub fn is_contextual_keyword(s: &str) -> bool {
+fn name_to_contextual_keyword(s: &str) -> &ContextualKeyword {
   unsafe {
-    CONTEXTUAL_KEYWORDS_INIT.call_once(|| {
-      CONTEXTUAL_KEYWORDS = Some({
-        let mut set = HashSet::new();
-        set.insert("implements");
-        set.insert("let");
-        set.insert("private");
-        set.insert("public");
-        set.insert("interface");
-        set.insert("package");
-        set.insert("protected");
-        set.insert("static");
-        set.insert("yield");
-        set
-      })
-    });
-    CONTEXTUAL_KEYWORDS.as_ref().unwrap().contains(s)
+    CONTEXTUAL_KEYWORD_NAME_KEY
+      .as_ref()
+      .unwrap()
+      .get(s)
+      .unwrap()
+  }
+}
+impl ContextualKeyword {
+  pub fn name(&self) -> &'static str {
+    contextual_keyword_to_name(self)
   }
 }
 
-impl TokenKind {
-  fn name(&self) -> &'static str {
-    match self {
-      // punctuator
-      TokenKind::BraceL => "{",
-      TokenKind::BraceR => "}",
-      TokenKind::ParenL => "(",
-      TokenKind::ParenR => ")",
-      TokenKind::BracketL => "[",
-      TokenKind::BracketR => "]",
-      TokenKind::Dot => ".",
-      TokenKind::Semi => ";",
-      TokenKind::Comma => ",",
-      TokenKind::LT => "<",
-      TokenKind::GT => ">",
-      TokenKind::LE => "<=",
-      TokenKind::GE => ">=",
-      TokenKind::Eq => "==",
-      TokenKind::NotEq => "!=",
-      TokenKind::EqStrict => "===",
-      TokenKind::NotEqStrict => "!==",
-      TokenKind::Add => "+",
-      TokenKind::Sub => "-",
-      TokenKind::Mul => "*",
-      TokenKind::Div => "/",
-      TokenKind::Mod => "%",
-      TokenKind::Inc => "++",
-      TokenKind::Dec => "--",
-      TokenKind::SHL => "<<",
-      TokenKind::SAR => ">>",
-      TokenKind::SHR => ">>>",
-      TokenKind::BitAnd => "&",
-      TokenKind::BitOr => "|",
-      TokenKind::BitXor => "^",
-      TokenKind::Not => "!",
-      TokenKind::BitNot => "~",
-      TokenKind::And => "&&",
-      TokenKind::Or => "||",
-      TokenKind::Conditional => "?",
-      TokenKind::Colon => ":",
-      TokenKind::Assign => "=",
-      TokenKind::AssignAdd => "+=",
-      TokenKind::AssignSub => "-=",
-      TokenKind::AssignMul => "*=",
-      TokenKind::AssignDiv => "/=",
-      TokenKind::AssignMod => "%=",
-      TokenKind::AssignSHL => "<<=",
-      TokenKind::AssignSAR => ">>=",
-      TokenKind::AssignSHR => ">>>=",
-      TokenKind::AssignBitAnd => "&=",
-      TokenKind::AssignBitOr => "|=",
-      TokenKind::AssignBitXor => "^=",
-      // keywords
-      TokenKind::Break => "break",
-      TokenKind::Do => "do",
-      TokenKind::Instanceof => "instanceof",
-      TokenKind::Typeof => "typeof",
-      TokenKind::Case => "case",
-      TokenKind::Else => "else",
-      TokenKind::New => "new",
-      TokenKind::Var => "var",
-      TokenKind::Catch => "catch",
-      TokenKind::Finally => "finally",
-      TokenKind::Return => "return",
-      TokenKind::Void => "void",
-      TokenKind::Continue => "continue",
-      TokenKind::For => "for",
-      TokenKind::Switch => "switch",
-      TokenKind::While => "while",
-      TokenKind::Debugger => "debugger",
-      TokenKind::Function => "function",
-      TokenKind::This => "this",
-      TokenKind::With => "with",
-      TokenKind::Default => "default",
-      TokenKind::If => "if",
-      TokenKind::Throw => "throw",
-      TokenKind::Delete => "delete",
-      TokenKind::In => "in",
-      TokenKind::Try => "try",
-      // future reserved words
-      TokenKind::Class => "class",
-      TokenKind::Enum => "enum",
-      TokenKind::Extends => "extends",
-      TokenKind::Super => "super",
-      TokenKind::Const => "const",
-      TokenKind::Export => "export",
-      TokenKind::Import => "import",
-      // contextual future-reserved-words
-      TokenKind::Implements => "implements",
-      TokenKind::Let => "let",
-      TokenKind::Private => "private",
-      TokenKind::Public => "public",
-      TokenKind::Interface => "interface",
-      TokenKind::Package => "package",
-      TokenKind::Protected => "protected",
-      TokenKind::Static => "static",
-      TokenKind::Yield => "yield",
+pub struct IdentifierData {
+  pub value: String,
+  pub loc: Location,
+}
 
-      TokenKind::Identifier => "identifier",
-      TokenKind::StringLiteral => "string",
-      TokenKind::NumericLiteral => "numeric",
-    }
-  }
+pub struct NullLiteralData {
+  pub loc: Location,
+}
+
+pub enum BooleanLiteral {
+  True,
+  False,
+}
+pub struct BooleanLiteralData {
+  pub kind: BooleanLiteral,
+  pub loc: Location,
+}
+
+pub struct StringLiteralData {
+  pub value: String,
+  pub loc: Location,
+}
+
+pub struct NumericLiteralData {
+  pub value: String,
+  pub loc: Location,
+}
+
+pub struct RegExpLiteralData {
+  pub value: String,
+  pub loc: Location,
+}
+
+pub enum Token {
+  Keyword(KeywordData),
+  Symbol(SymbolData),
+  ContextualKeyword(ContextualKeywordData),
+  Identifier(IdentifierData),
+  NullLiteral(NullLiteralData),
+  BooleanLiteral(BooleanLiteralData),
+  StringLiteral(StringLiteralData),
+  NumericLiteral(NumericLiteralData),
+  RegExpLiteral(RegExpLiteralData),
+}
+
+static INIT_TOKEN_DATA_ONCE: Once = Once::new();
+pub fn init_token_data() {
+  INIT_TOKEN_DATA_ONCE.call_once(|| {
+    init_keywords();
+    init_symbols();
+    init_contextual_keyword();
+  });
 }
 
 #[cfg(test)]
@@ -365,16 +392,18 @@ mod token_tests {
   use super::*;
 
   #[test]
-  fn kind_name() {
-    assert_eq!("{", TokenKind::BraceL.name());
-    assert_eq!("}", TokenKind::BraceR.name());
-    assert_eq!("yield", TokenKind::Yield.name());
+  fn name() {
+    init_token_data();
+    assert_eq!("break", Keyword::Break.name());
+    assert_eq!("}", Symbol::BraceR.name());
+    assert_eq!("yield", ContextualKeyword::Yield.name());
   }
 
   #[test]
-  fn static_set() {
-    assert!(is_symbol("{"));
+  fn static_map_set() {
+    init_token_data();
     assert!(is_keyword("break"));
-    assert!(is_contextual_keyword("let"));
+    assert!(is_symbol("{"));
+    assert!(is_contextual_keyword("implements"));
   }
 }
