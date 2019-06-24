@@ -496,21 +496,15 @@ mod lexer_tests {
     let src = Source::new(&code);
     let mut lex = Lexer::new(src);
     let mut tok = lex.read_name().ok().unwrap();
-    if let Token::Identifier(id) = tok {
-      assert_eq!("\u{01c5}\u{0920}", id.value);
-    }
+    assert_eq!("\u{01c5}\u{0920}", tok.id_data().unwrap().value);
 
     lex.skip_whitespace();
     tok = lex.read_name().ok().unwrap();
-    if let Token::Identifier(id) = tok {
-      assert_eq!("a", id.value);
-    }
+    assert_eq!("a", tok.id_data().unwrap().value);
 
     lex.skip_whitespace();
     tok = lex.read_name().ok().unwrap();
-    if let Token::Identifier(id) = tok {
-      assert_eq!("a\u{1885}", id.value);
-    }
+    assert_eq!("a\u{1885}", tok.id_data().unwrap().value);
   }
 
   #[test]
@@ -540,27 +534,19 @@ mod lexer_tests {
     let src = Source::new(&code);
     let mut lex = Lexer::new(src);
     let mut tok = lex.read_numeric().ok().unwrap();
-    if let Token::NumericLiteral(num) = tok {
-      assert_eq!("1", num.value);
-    }
+    assert_eq!("1", tok.num_literal_data().unwrap().value);
 
     lex.skip_whitespace();
     tok = lex.read_numeric().ok().unwrap();
-    if let Token::NumericLiteral(num) = tok {
-      assert_eq!(".1e1", num.value);
-    }
+    assert_eq!(".1e1", tok.num_literal_data().unwrap().value);
 
     lex.skip_whitespace();
     tok = lex.read_numeric().ok().unwrap();
-    if let Token::NumericLiteral(num) = tok {
-      assert_eq!("0xa1", num.value);
-    }
+    assert_eq!("0xa1", tok.num_literal_data().unwrap().value);
 
     lex.skip_whitespace();
     tok = lex.read_numeric().ok().unwrap();
-    if let Token::NumericLiteral(num) = tok {
-      assert_eq!("0X123", num.value);
-    }
+    assert_eq!("0X123", tok.num_literal_data().unwrap().value);
   }
 
   #[test]

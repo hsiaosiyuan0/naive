@@ -378,6 +378,71 @@ pub enum Token {
   RegExpLiteral(RegExpLiteralData),
 }
 
+impl Token {
+  pub fn keyword_data(&self) -> Option<&KeywordData> {
+    match self {
+      Token::Keyword(data) => Some(data),
+      _ => None,
+    }
+  }
+
+  pub fn symbol_data(&self) -> Option<&SymbolData> {
+    match self {
+      Token::Symbol(data) => Some(data),
+      _ => None,
+    }
+  }
+
+  pub fn ctx_keyword_data(&self) -> Option<&ContextualKeywordData> {
+    match self {
+      Token::ContextualKeyword(data) => Some(data),
+      _ => None,
+    }
+  }
+
+  pub fn id_data(&self) -> Option<&IdentifierData> {
+    match self {
+      Token::Identifier(data) => Some(data),
+      _ => None,
+    }
+  }
+
+  pub fn null_literal_data(&self) -> Option<&NumericLiteralData> {
+    match self {
+      Token::NumericLiteral(data) => Some(data),
+      _ => None,
+    }
+  }
+
+  pub fn bool_literal_data(&self) -> Option<&BooleanLiteralData> {
+    match self {
+      Token::BooleanLiteral(data) => Some(data),
+      _ => None,
+    }
+  }
+
+  pub fn str_literal_data(&self) -> Option<&StringLiteralData> {
+    match self {
+      Token::StringLiteral(data) => Some(data),
+      _ => None,
+    }
+  }
+
+  pub fn num_literal_data(&self) -> Option<&NumericLiteralData> {
+    match self {
+      Token::NumericLiteral(data) => Some(data),
+      _ => None,
+    }
+  }
+
+  pub fn regexp_literal_data(&self) -> Option<&RegExpLiteralData> {
+    match self {
+      Token::RegExpLiteral(data) => Some(data),
+      _ => None,
+    }
+  }
+}
+
 static INIT_TOKEN_DATA_ONCE: Once = Once::new();
 pub fn init_token_data() {
   INIT_TOKEN_DATA_ONCE.call_once(|| {
