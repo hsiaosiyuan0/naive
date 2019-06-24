@@ -144,6 +144,13 @@ impl<'a> Lexer<'a> {
     )
   }
 
+  fn loc(&self) -> Location {
+    Location {
+      line: self.src.line,
+      column: self.src.column,
+    }
+  }
+
   // we use the prior read char as a barrier which is passed by the formal parameter `bs`,
   // if bs is `\` then we can consider the next 4 characters must be a valid unicode escaping,
   // we try to turn the valid unicode escaping to a char then return the escaped char if the turning
@@ -180,7 +187,7 @@ impl<'a> Lexer<'a> {
     }
     Ok(Token::Identifier(IdentifierData {
       value: val.iter().collect(),
-      loc: Location::new(),
+      loc: self.loc(),
     }))
   }
 
@@ -308,7 +315,7 @@ impl<'a> Lexer<'a> {
     match value {
       Ok(v) => Ok(Token::NumericLiteral(NumericLiteralData {
         value: v,
-        loc: Location::new(),
+        loc: self.loc(),
       })),
       Err(e) => Err(e),
     }
@@ -390,7 +397,7 @@ impl<'a> Lexer<'a> {
     }
     Ok(Token::StringLiteral(StringLiteralData {
       value: ret,
-      loc: Location::new(),
+      loc: self.loc(),
     }))
   }
 
