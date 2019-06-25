@@ -1,12 +1,16 @@
 use crate::source::*;
 use crate::token::*;
+use core::borrow::BorrowMut;
 use std::char;
+use std::rc::Rc;
 use std::str;
 use std::u32;
 use unic_ucd::GeneralCategory;
 
 pub struct Lexer<'a> {
   src: Source<'a>,
+  tok: Rc<Token>,
+  next_is_line_terminator: bool,
 }
 
 pub struct LexError {
@@ -16,6 +20,12 @@ pub struct LexError {
 impl LexError {
   fn new(msg: String) -> Self {
     LexError { msg }
+  }
+
+  fn default() -> Self {
+    LexError {
+      msg: "".to_string(),
+    }
   }
 }
 
@@ -91,13 +101,35 @@ fn is_non_escape_ch(c: char) -> bool {
 
 impl<'a> Lexer<'a> {
   pub fn new(src: Source<'a>) -> Self {
-    Lexer { src }
+    Lexer {
+      src,
+      tok: Rc::new(Token::Nil),
+      next_is_line_terminator: false,
+    }
   }
 
-  //  pub fn next(&mut self) -> Option<Token> {
-  //    self.skip_whitespace();
-  //    self.read_name()
-  //  }
+  pub fn next(&mut self) -> Result<Rc<Token>, LexError> {
+    self.skip_whitespace();
+    let mut ret: Result<Token, LexError> = Err(LexError::default());
+    if self.ahead_is_id_start() {
+      ret = self.read_name();
+    } else if self.ahead_is_decimal_int() {
+      ret = self.read_numeric();
+    } else if self.ahead_is_string_start() {
+      let t = self.src.read().unwrap();
+      ret = self.read_string(t);
+    } else {
+      ret = self.read_symbol();
+    }
+    match ret {
+      Ok(tok) => {
+        self.tok = Rc::new(tok);
+        self.next_is_line_terminator = self.ahead_is_line_terminator_or_eof();
+        Ok(self.tok.clone())
+      }
+      Err(e) => Err(e),
+    }
+  }
 
   fn read_unicode_escape_seq(&mut self) -> Option<char> {
     let mut hex = [0, 0, 0, 0];
@@ -144,11 +176,24 @@ impl<'a> Lexer<'a> {
     )
   }
 
-  fn loc(&self) -> Location {
-    Location {
+  fn pos(&self) -> Position {
+    Position {
       line: self.src.line,
       column: self.src.column,
     }
+  }
+
+  fn loc(&self) -> SourceLoc {
+    SourceLoc {
+      start: self.pos(),
+      end: Position::new(),
+    }
+  }
+
+  fn fin_loc(&self, loc: SourceLoc) -> SourceLoc {
+    let mut loc = loc;
+    loc.end = self.pos();
+    loc
   }
 
   // we use the prior read char as a barrier which is passed by the formal parameter `bs`,
@@ -167,16 +212,11 @@ impl<'a> Lexer<'a> {
     }
   }
 
-  pub fn read_name(&mut self) -> Result<Token, LexError> {
-    let mut c = self.src.read().unwrap();
-    match self.read_escape_unicode(c) {
-      Ok(cc) => c = cc,
-      Err(e) => return Err(e),
-    }
-    let mut val = vec![c];
+  fn read_id_part(&mut self) -> Result<String, LexError> {
+    let mut val = vec![];
     loop {
       if self.ahead_is_id_part() {
-        c = self.src.read().unwrap();
+        let c = self.src.read().unwrap();
         match self.read_escape_unicode(c) {
           Ok(cc) => val.push(cc),
           Err(e) => return Err(e),
@@ -185,10 +225,47 @@ impl<'a> Lexer<'a> {
         break;
       }
     }
-    Ok(Token::Identifier(IdentifierData {
-      value: val.iter().collect(),
-      loc: self.loc(),
-    }))
+    Ok(val.into_iter().collect())
+  }
+
+  pub fn read_name(&mut self) -> Result<Token, LexError> {
+    let loc = self.loc();
+    let mut c = self.src.read().unwrap();
+    match self.read_escape_unicode(c) {
+      Ok(cc) => c = cc,
+      Err(e) => return Err(e),
+    }
+    let mut val = vec![c];
+    match self.read_id_part() {
+      Ok(cc) => val.extend(cc.chars()),
+      Err(e) => return Err(e),
+    }
+    let val: String = val.into_iter().collect();
+    if is_keyword(&val) {
+      Ok(Token::Keyword(KeywordData {
+        kind: name_to_keyword(&val),
+        loc: self.fin_loc(loc),
+      }))
+    } else if is_ctx_keyword(&val) {
+      Ok(Token::ContextualKeyword(CtxKeywordData {
+        kind: name_to_ctx_keyword(&val),
+        loc: self.fin_loc(loc),
+      }))
+    } else if is_bool(&val) {
+      Ok(Token::BooleanLiteral(BooleanLiteralData {
+        kind: name_to_bool(&val),
+        loc: self.fin_loc(loc),
+      }))
+    } else if is_null(&val) {
+      Ok(Token::NullLiteral(NullLiteralData {
+        loc: self.fin_loc(loc),
+      }))
+    } else {
+      Ok(Token::Identifier(IdentifierData {
+        value: val,
+        loc: self.fin_loc(loc),
+      }))
+    }
   }
 
   fn read_decimal_digits(&mut self) -> String {
@@ -297,6 +374,7 @@ impl<'a> Lexer<'a> {
   }
 
   pub fn read_numeric(&mut self) -> Result<Token, LexError> {
+    let loc = self.loc();
     let value: Result<String, LexError>;
     let mut is_hex = false;
     if self.src.test_ahead('0') {
@@ -315,9 +393,16 @@ impl<'a> Lexer<'a> {
     match value {
       Ok(v) => Ok(Token::NumericLiteral(NumericLiteralData {
         value: v,
-        loc: self.loc(),
+        loc: self.fin_loc(loc),
       })),
       Err(e) => Err(e),
+    }
+  }
+
+  fn ahead_is_string_start(&mut self) -> bool {
+    match self.src.peek() {
+      Some(c) => c == '\'' || c == '"',
+      _ => false,
     }
   }
 
@@ -375,6 +460,7 @@ impl<'a> Lexer<'a> {
   }
 
   fn read_string(&mut self, t: char) -> Result<Token, LexError> {
+    let loc = self.loc();
     let mut ret = String::new();
     loop {
       match self.src.peek() {
@@ -397,8 +483,141 @@ impl<'a> Lexer<'a> {
     }
     Ok(Token::StringLiteral(StringLiteralData {
       value: ret,
-      loc: self.loc(),
+      loc: self.fin_loc(loc),
     }))
+  }
+
+  fn ahead_is_regexp_start(&mut self) -> bool {
+    match self.src.peek() {
+      Some('/') => self.tok.is_before_expr(),
+      _ => false,
+    }
+  }
+
+  fn ahead_is_regexp_backslash_seq(&mut self) -> bool {
+    match self.src.peek() {
+      Some(c) => c == '\\',
+      _ => false,
+    }
+  }
+
+  fn read_regexp_backslash_seq(&mut self) -> Result<String, LexError> {
+    let mut ret = vec![self.src.read().unwrap()];
+    if self.ahead_is_line_terminator_or_eof() {
+      Err(LexError::new(self.errmsg()))
+    } else {
+      ret.push(self.src.read().unwrap());
+      Ok(ret.into_iter().collect())
+    }
+  }
+
+  fn ahead_is_regexp_class(&mut self) -> bool {
+    match self.src.peek() {
+      Some(c) => c == '[',
+      _ => false,
+    }
+  }
+
+  fn read_regexp_class(&mut self) -> Result<String, LexError> {
+    let mut ret = vec![self.src.read().unwrap()];
+    loop {
+      if self.ahead_is_regexp_backslash_seq() {
+        match self.read_regexp_backslash_seq() {
+          Ok(s) => ret.extend(s.chars()),
+          Err(e) => return Err(e),
+        }
+      } else if self.ahead_is_line_terminator_or_eof() {
+        return Err(LexError::new(self.errmsg()));
+      } else {
+        let c = self.src.read().unwrap();
+        ret.push(c);
+        if c == ']' {
+          break;
+        }
+      };
+    }
+    Ok(ret.into_iter().collect())
+  }
+
+  fn read_regexp_body(&mut self) -> Result<String, LexError> {
+    let mut ret = vec![self.src.read().unwrap()];
+    loop {
+      if self.ahead_is_regexp_backslash_seq() {
+        match self.read_regexp_backslash_seq() {
+          Ok(s) => ret.extend(s.chars()),
+          Err(e) => return Err(e),
+        }
+      } else if self.ahead_is_regexp_class() {
+        match self.read_regexp_class() {
+          Ok(s) => ret.extend(s.chars()),
+          Err(e) => return Err(e),
+        }
+      } else if self.ahead_is_line_terminator_or_eof() {
+        return Err(LexError::new(self.errmsg()));
+      } else {
+        let c = self.src.read().unwrap();
+        ret.push(c);
+        if c == '/' {
+          break;
+        }
+      }
+    }
+    Ok(ret.into_iter().collect())
+  }
+
+  fn read_regexp_flags(&mut self) -> Result<String, LexError> {
+    let mut ret = vec![];
+    loop {
+      if self.ahead_is_id_part() {
+        match self.read_id_part() {
+          Ok(s) => ret.extend(s.chars()),
+          Err(e) => return Err(e),
+        }
+      } else {
+        break;
+      }
+    }
+    Ok(ret.into_iter().collect())
+  }
+
+  fn read_regexp(&mut self) -> Result<Token, LexError> {
+    let loc = self.loc();
+    match self.read_regexp_body() {
+      Ok(mut body) => match self.read_regexp_flags() {
+        Ok(flags) => {
+          body.push_str(flags.as_str());
+          Ok(Token::RegExpLiteral(RegExpLiteralData {
+            value: body,
+            loc: self.fin_loc(loc),
+          }))
+        }
+        Err(e) => Err(e),
+      },
+      Err(e) => Err(e),
+    }
+  }
+
+  fn read_symbol(&mut self) -> Result<Token, LexError> {
+    if self.ahead_is_regexp_start() {
+      return self.read_regexp();
+    }
+    let loc = self.loc();
+    let mut s = vec![];
+    loop {
+      if self.ahead_is_whitespace_or_eof() {
+        break;
+      }
+      s.push(self.src.read().unwrap());
+    }
+    let s: String = s.into_iter().collect();
+    if is_symbol(&s) {
+      Ok(Token::Symbol(SymbolData {
+        kind: name_to_symbol(&s),
+        loc: self.fin_loc(loc),
+      }))
+    } else {
+      Err(LexError::default())
+    }
   }
 
   fn skip_comment_single(&mut self) {
@@ -427,6 +646,20 @@ impl<'a> Lexer<'a> {
     }
   }
 
+  fn ahead_is_line_terminator_or_eof(&mut self) -> bool {
+    match self.src.peek() {
+      Some(c) => is_line_terminator(c),
+      _ => true,
+    }
+  }
+
+  fn ahead_is_eof(&mut self) -> bool {
+    match self.src.peek() {
+      Some(_) => false,
+      _ => true,
+    }
+  }
+
   fn ahead_is_whitespace(&mut self) -> bool {
     match self.src.peek() {
       Some(c) => is_whitespace(c),
@@ -434,9 +667,23 @@ impl<'a> Lexer<'a> {
     }
   }
 
+  fn ahead_is_whitespace_or_line_terminator(&mut self) -> bool {
+    match self.src.peek() {
+      Some(c) => c.is_whitespace(),
+      _ => false,
+    }
+  }
+
+  fn ahead_is_whitespace_or_eof(&mut self) -> bool {
+    match self.src.peek() {
+      Some(c) => is_whitespace(c),
+      _ => true,
+    }
+  }
+
   pub fn skip_whitespace(&mut self) {
     loop {
-      if self.ahead_is_whitespace() {
+      if self.ahead_is_whitespace_or_line_terminator() {
         self.src.read();
       } else if self.src.test_ahead2('/', '/') {
         self.skip_comment_single();
@@ -499,7 +746,9 @@ mod lexer_tests {
 
   #[test]
   fn read_name() {
-    let code = String::from("\\u01c5\\u0920 a aᢅ");
+    init_token_data();
+
+    let code = String::from("\\u01c5\\u0920 a aᢅ break let true null");
     let src = Source::new(&code);
     let mut lex = Lexer::new(src);
     let mut tok = lex.read_name().ok().unwrap();
@@ -512,6 +761,22 @@ mod lexer_tests {
     lex.skip_whitespace();
     tok = lex.read_name().ok().unwrap();
     assert_eq!("a\u{1885}", tok.id_data().unwrap().value);
+
+    lex.skip_whitespace();
+    tok = lex.read_name().ok().unwrap();
+    assert_eq!("break", tok.keyword_data().unwrap().kind.name());
+
+    lex.skip_whitespace();
+    tok = lex.read_name().ok().unwrap();
+    assert_eq!("let", tok.ctx_keyword_data().unwrap().kind.name());
+
+    lex.skip_whitespace();
+    tok = lex.read_name().ok().unwrap();
+    assert_eq!("true", tok.bool_literal_data().unwrap().kind.name());
+
+    lex.skip_whitespace();
+    tok = lex.read_name().ok().unwrap();
+    assert!(tok.is_null());
   }
 
   #[test]
@@ -573,5 +838,59 @@ mod lexer_tests {
     if let Token::StringLiteral(s) = tok {
       assert_eq!("hello 世界", s.value);
     }
+  }
+
+  #[test]
+  fn next() {
+    init_token_data();
+
+    let code = String::from("'hello world' break { /test/ig");
+    let src = Source::new(&code);
+    let mut lex = Lexer::new(src);
+    let mut tok = lex.next();
+    assert_eq!(
+      "hello world",
+      tok.ok().unwrap().str_literal_data().unwrap().value
+    );
+
+    tok = lex.next();
+    assert_eq!(
+      "break",
+      tok.ok().unwrap().keyword_data().unwrap().kind.name()
+    );
+
+    tok = lex.next();
+    assert_eq!("{", tok.ok().unwrap().symbol_data().unwrap().kind.name());
+
+    tok = lex.next();
+    assert_eq!(
+      "/test/ig",
+      tok.ok().unwrap().regexp_literal_data().unwrap().value
+    );
+  }
+
+  #[test]
+  fn loc() {
+    init_token_data();
+
+    let code = String::from("a\n  bcd");
+    let src = Source::new(&code);
+    let mut lex = Lexer::new(src);
+    let mut tok = lex.next().ok().unwrap();
+    let mut td = tok.id_data().unwrap();
+    assert_eq!("a", td.value);
+    let mut loc = &td.loc;
+    assert_eq!(1, loc.start.line);
+    assert_eq!(0, loc.start.column);
+    assert_eq!(1, loc.end.line);
+    assert_eq!(1, loc.end.column);
+
+    tok = lex.next().ok().unwrap();
+    td = tok.id_data().unwrap();
+    loc = &td.loc;
+    assert_eq!(2, loc.start.line);
+    assert_eq!(2, loc.start.column);
+    assert_eq!(2, loc.end.line);
+    assert_eq!(5, loc.end.column);
   }
 }

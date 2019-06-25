@@ -54,6 +54,8 @@ impl<'a> Source<'a> {
       if c == EOL {
         self.line += 1;
         self.column = 0;
+      } else {
+        self.column += 1;
       }
     }
     c

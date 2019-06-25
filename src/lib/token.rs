@@ -1,23 +1,27 @@
-use core::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
-use std::sync::{Once, ONCE_INIT};
+use std::sync::Once;
 
-pub struct Location {
+pub struct Position {
   pub line: i32,
   pub column: i32,
 }
 
-impl Location {
-  pub fn new() -> Self {
-    Location { line: 0, column: 0 }
+impl Position {
+  pub fn new() -> Position {
+    Position { line: 0, column: 0 }
   }
+}
+
+pub struct SourceLoc {
+  pub start: Position,
+  pub end: Position,
 }
 
 pub struct KeywordData {
   pub kind: Keyword,
-  pub loc: Location,
+  pub loc: SourceLoc,
 }
-#[derive(Eq, PartialEq, Hash)]
+#[derive(Eq, PartialEq, Hash, Copy, Clone)]
 pub enum Keyword {
   Break,
   Do,
@@ -55,8 +59,16 @@ pub enum Keyword {
   Import,
 }
 
+// `$be` denotes the `beforeExpr` attribute of token.
+// Since the grammar of regexp of js is a island grammar when see it at the point of view of whole js grammar,
+// we have two opportunities to process that island grammar, either at tokenizing phase or parsing phase.
+//
+// Here we use a manner which is taken from [acorn](https://github.com/acornjs/acorn/blob/master/acorn/src/tokentype.js),
+// it attaches a `beforeExpr` attribute to each token type to indicate that the slashes after those tokens
+// would be the beginning of regexp if the value of their `beforeExpr` attributes are `true`,
+// it works at tokenizing phase therefore it can obey the definition of regexp to produce RegExprLiteral tokens.
 macro_rules! gen_map {
-  ($($k:expr => $v:expr)*) => {
+  ($($k:expr => $v:expr, $be:expr)*) => {
     {
       let mut s = HashSet::new();
       $(
@@ -70,7 +82,11 @@ macro_rules! gen_map {
       $(
         vk.insert($v, $k);
       )*
-      (Some(s), Some(kv), Some(vk))
+      let mut be = HashSet::new();
+      $(
+        be.insert($k);
+      )*
+      (Some(s), Some(kv), Some(vk), Some(be))
     }
   };
 }
@@ -78,65 +94,78 @@ macro_rules! gen_map {
 static mut KEYWORDS_SET: Option<HashSet<&'static str>> = None;
 static mut KEYWORDS_KEY_NAME: Option<HashMap<Keyword, &'static str>> = None;
 static mut KEYWORDS_NAME_KEY: Option<HashMap<&'static str, Keyword>> = None;
+static mut KEYWORDS_BEFORE_EXPR_SET: Option<HashSet<Keyword>> = None;
 fn init_keywords() {
-  let (s, kv, vk) = gen_map! {
-    Keyword::Break => "break"
-    Keyword::Do => "do"
-    Keyword::Instanceof => "instanceof"
-    Keyword::Typeof => "typeof"
-    Keyword::Case => "case"
-    Keyword::Else => "else"
-    Keyword::New => "new"
-    Keyword::Var => "var"
-    Keyword::Catch => "catch"
-    Keyword::Finally => "finally"
-    Keyword::Return => "return"
-    Keyword::Void => "void"
-    Keyword::Continue => "continue"
-    Keyword::For => "for"
-    Keyword::Switch => "switch"
-    Keyword::While => "while"
-    Keyword::Debugger => "debugger"
-    Keyword::Function => "function"
-    Keyword::This => "this"
-    Keyword::With => "with"
-    Keyword::Default => "default"
-    Keyword::If => "if"
-    Keyword::Throw => "throw"
-    Keyword::Delete => "delete"
-    Keyword::In => "in"
-    Keyword::Try => "try"
+  let (s, kv, vk, be) = gen_map! {
+    Keyword::Break => "break", false
+    Keyword::Do => "do", true
+    Keyword::Instanceof => "instanceof", true
+    Keyword::Typeof => "typeof", true
+    Keyword::Case => "case", true
+    Keyword::Else => "else", true
+    Keyword::New => "new", true
+    Keyword::Var => "var", false
+    Keyword::Catch => "catch", false
+    Keyword::Finally => "finally", false
+    Keyword::Return => "return", true
+    Keyword::Void => "void", true
+    Keyword::Continue => "continue", false
+    Keyword::For => "for", false
+    Keyword::Switch => "switch", false
+    Keyword::While => "while", false
+    Keyword::Debugger => "debugger", false
+    Keyword::Function => "function", false
+    Keyword::This => "this", false
+    Keyword::With => "with", false
+    Keyword::Default => "default", true
+    Keyword::If => "if", false
+    Keyword::Throw => "throw", true
+    Keyword::Delete => "delete", true
+    Keyword::In => "in", true
+    Keyword::Try => "try", false
     // future reserved words
-    Keyword::Class => "class"
-    Keyword::Enum => "enum"
-    Keyword::Extends => "extends"
-    Keyword::Super => "super"
-    Keyword::Const => "const"
-    Keyword::Export => "export"
-    Keyword::Import => "import"
+    Keyword::Class => "class", false
+    Keyword::Enum => "enum", false
+    Keyword::Extends => "extends", true
+    Keyword::Super => "super", false
+    Keyword::Const => "const", false
+    Keyword::Export => "export", false
+    Keyword::Import => "import", false
   };
   unsafe {
     KEYWORDS_SET = s;
     KEYWORDS_KEY_NAME = kv;
     KEYWORDS_NAME_KEY = vk;
+    KEYWORDS_BEFORE_EXPR_SET = be;
   }
 }
-fn is_keyword(s: &str) -> bool {
+pub fn is_keyword(s: &str) -> bool {
   unsafe { KEYWORDS_SET.as_ref().unwrap().contains(s) }
 }
-fn keyword_to_name(v: &Keyword) -> &'static str {
+pub fn keyword_to_name(v: &Keyword) -> &'static str {
   unsafe { KEYWORDS_KEY_NAME.as_ref().unwrap().get(v).unwrap() }
 }
-fn name_to_keyword(s: &str) -> &Keyword {
-  unsafe { KEYWORDS_NAME_KEY.as_ref().unwrap().get(s).unwrap() }
+pub fn name_to_keyword(s: &str) -> Keyword {
+  unsafe {
+    KEYWORDS_NAME_KEY
+      .as_ref()
+      .unwrap()
+      .get(s)
+      .unwrap()
+      .to_owned()
+  }
 }
 impl Keyword {
   pub fn name(&self) -> &'static str {
     keyword_to_name(self)
   }
+
+  pub fn is_before_expr(&self) -> bool {
+    unsafe { KEYWORDS_BEFORE_EXPR_SET.as_ref().unwrap().contains(self) }
+  }
 }
 
-#[derive(Eq, PartialEq, Hash)]
+#[derive(Eq, PartialEq, Hash, Copy, Clone)]
 pub enum Symbol {
   BraceL,
   BraceR,
@@ -189,86 +218,99 @@ pub enum Symbol {
 }
 pub struct SymbolData {
   pub kind: Symbol,
-  pub loc: Location,
+  pub loc: SourceLoc,
 }
 
 static mut SYMBOLS_SET: Option<HashSet<&'static str>> = None;
 static mut SYMBOLS_KEY_NAME: Option<HashMap<Symbol, &'static str>> = None;
 static mut SYMBOLS_NAME_KEY: Option<HashMap<&'static str, Symbol>> = None;
+static mut SYMBOLS_BEFORE_EXPR_SET: Option<HashSet<Symbol>> = None;
 fn init_symbols() {
-  let (s, kv, vk) = gen_map! {
-    Symbol::BraceL => "{"
-    Symbol::BraceR => "}"
-    Symbol::ParenL => "("
-    Symbol::ParenR => ")"
-    Symbol::BracketL => "["
-    Symbol::BracketR => "]"
-    Symbol::Dot => "."
-    Symbol::Semi => ";"
-    Symbol::Comma => ""
-    Symbol::LT => "<"
-    Symbol::GT => ">"
-    Symbol::LE => "<="
-    Symbol::GE => ">="
-    Symbol::Eq => "=="
-    Symbol::NotEq => "!="
-    Symbol::EqStrict => "==="
-    Symbol::NotEqStrict => "!=="
-    Symbol::Add => "+"
-    Symbol::Sub => "-"
-    Symbol::Mul => "*"
-    Symbol::Div => "/"
-    Symbol::Mod => "%"
-    Symbol::Inc => "++"
-    Symbol::Dec => "--"
-    Symbol::SHL => "<<"
-    Symbol::SAR => ">>"
-    Symbol::SHR => ">>>"
-    Symbol::BitAnd => "&"
-    Symbol::BitOr => "|"
-    Symbol::BitXor => "^"
-    Symbol::Not => "!"
-    Symbol::BitNot => "~"
-    Symbol::And => "&&"
-    Symbol::Or => "||"
-    Symbol::Conditional => "?"
-    Symbol::Colon => ":"
-    Symbol::Assign => "="
-    Symbol::AssignAdd => "+="
-    Symbol::AssignSub => "-="
-    Symbol::AssignMul => "*="
-    Symbol::AssignDiv => "/="
-    Symbol::AssignMod => "%="
-    Symbol::AssignSHL => "<<="
-    Symbol::AssignSAR => ">>="
-    Symbol::AssignSHR => ">>>="
-    Symbol::AssignBitAnd => "&="
-    Symbol::AssignBitOr => "|="
-    Symbol::AssignBitXor => "^="
+  let (s, kv, vk, be) = gen_map! {
+    Symbol::BraceL => "{", true
+    Symbol::BraceR => "}", false
+    Symbol::ParenL => "(", true
+    Symbol::ParenR => ")", false
+    Symbol::BracketL => "[", true
+    Symbol::BracketR => "]", false
+    Symbol::Dot => ".", true
+    Symbol::Semi => ";", true
+    Symbol::Comma => ",", true
+    Symbol::LT => "<", true
+    Symbol::GT => ">", true
+    Symbol::LE => "<=", true
+    Symbol::GE => ">=", true
+    Symbol::Eq => "==", true
+    Symbol::NotEq => "!=", true
+    Symbol::EqStrict => "===", true
+    Symbol::NotEqStrict => "!==", true
+    Symbol::Add => "+", true
+    Symbol::Sub => "-", true
+    Symbol::Mul => "*", true
+    Symbol::Div => "/", true
+    Symbol::Mod => "%", true
+    Symbol::Inc => "++", false
+    Symbol::Dec => "--", false
+    Symbol::SHL => "<<", true
+    Symbol::SAR => ">>", true
+    Symbol::SHR => ">>>", true
+    Symbol::BitAnd => "&", true
+    Symbol::BitOr => "|", true
+    Symbol::BitXor => "^", true
+    Symbol::Not => "!", true
+    Symbol::BitNot => "~", true
+    Symbol::And => "&&", true
+    Symbol::Or => "||", true
+    Symbol::Conditional => "?", true
+    Symbol::Colon => ":", true
+    Symbol::Assign => "=", true
+    Symbol::AssignAdd => "+=", true
+    Symbol::AssignSub => "-=", true
+    Symbol::AssignMul => "*=", true
+    Symbol::AssignDiv => "/=", true
+    Symbol::AssignMod => "%=", true
+    Symbol::AssignSHL => "<<=", true
+    Symbol::AssignSAR => ">>=", true
+    Symbol::AssignSHR => ">>>=", true
+    Symbol::AssignBitAnd => "&=", true
+    Symbol::AssignBitOr => "|=", true
+    Symbol::AssignBitXor => "^=", true
   };
   unsafe {
     SYMBOLS_SET = s;
     SYMBOLS_KEY_NAME = kv;
     SYMBOLS_NAME_KEY = vk;
+    SYMBOLS_BEFORE_EXPR_SET = be;
   }
 }
-fn is_symbol(s: &str) -> bool {
+pub fn is_symbol(s: &str) -> bool {
   unsafe { SYMBOLS_SET.as_ref().unwrap().contains(s) }
 }
-fn symbol_to_name(v: &Symbol) -> &'static str {
+pub fn symbol_to_name(v: &Symbol) -> &'static str {
   unsafe { SYMBOLS_KEY_NAME.as_ref().unwrap().get(v).unwrap() }
 }
-fn name_to_symbol(s: &str) -> &Symbol {
-  unsafe { SYMBOLS_NAME_KEY.as_ref().unwrap().get(s).unwrap() }
+pub fn name_to_symbol(s: &str) -> Symbol {
+  unsafe {
+    SYMBOLS_NAME_KEY
+      .as_ref()
+      .unwrap()
+      .get(s)
+      .unwrap()
+      .to_owned()
+  }
 }
 impl Symbol {
   pub fn name(&self) -> &'static str {
     symbol_to_name(self)
   }
+
+  pub fn is_before_expr(&self) -> bool {
+    unsafe { SYMBOLS_BEFORE_EXPR_SET.as_ref().unwrap().contains(self) }
+  }
 }
 
-#[derive(Eq, PartialEq, Hash)]
-pub enum ContextualKeyword {
+#[derive(Eq, PartialEq, Hash, Copy, Clone)]
+pub enum CtxKeyword {
   Implements,
   Let,
   Private,
@@ -279,67 +321,71 @@ pub enum ContextualKeyword {
   Static,
   Yield,
 }
-pub struct ContextualKeywordData {
-  pub kind: Symbol,
-  pub loc: Location,
+pub struct CtxKeywordData {
+  pub kind: CtxKeyword,
+  pub loc: SourceLoc,
 }
 
-static mut CONTEXTUAL_KEYWORD_SET: Option<HashSet<&'static str>> = None;
-static mut CONTEXTUAL_KEYWORD_KEY_NAME: Option<HashMap<ContextualKeyword, &'static str>> = None;
-static mut CONTEXTUAL_KEYWORD_NAME_KEY: Option<HashMap<&'static str, ContextualKeyword>> = None;
-fn init_contextual_keyword() {
-  let (s, kv, vk) = gen_map! {
-    ContextualKeyword::Implements => "implements"
-    ContextualKeyword::Let => "let"
-    ContextualKeyword::Private => "private"
-    ContextualKeyword::Public => "public"
-    ContextualKeyword::Interface => "interface"
-    ContextualKeyword::Package => "package"
-    ContextualKeyword::Protected => "protected"
-    ContextualKeyword::Static => "static"
-    ContextualKeyword::Yield => "yield"
+static mut CTX_KEYWORD_SET: Option<HashSet<&'static str>> = None;
+static mut CTX_KEYWORD_KEY_NAME: Option<HashMap<CtxKeyword, &'static str>> = None;
+static mut CTX_KEYWORD_NAME_KEY: Option<HashMap<&'static str, CtxKeyword>> = None;
+static mut CTX_KEYWORD_BEFORE_EXPR_SET: Option<HashSet<CtxKeyword>> = None;
+fn init_ctx_keyword() {
+  let (s, kv, vk, be) = gen_map! {
+    CtxKeyword::Implements => "implements", false
+    CtxKeyword::Let => "let", false
+    CtxKeyword::Private => "private", false
+    CtxKeyword::Public => "public", false
+    CtxKeyword::Interface => "interface", false
+    CtxKeyword::Package => "package", false
+    CtxKeyword::Protected => "protected", false
+    CtxKeyword::Static => "static", false
+    CtxKeyword::Yield => "yield", true
 
   };
   unsafe {
-    CONTEXTUAL_KEYWORD_SET = s;
-    CONTEXTUAL_KEYWORD_KEY_NAME = kv;
-    CONTEXTUAL_KEYWORD_NAME_KEY = vk;
+    CTX_KEYWORD_SET = s;
+    CTX_KEYWORD_KEY_NAME = kv;
+    CTX_KEYWORD_NAME_KEY = vk;
+    CTX_KEYWORD_BEFORE_EXPR_SET = be;
   }
 }
-fn is_contextual_keyword(s: &str) -> bool {
-  unsafe { CONTEXTUAL_KEYWORD_SET.as_ref().unwrap().contains(s) }
+pub fn is_ctx_keyword(s: &str) -> bool {
+  unsafe { CTX_KEYWORD_SET.as_ref().unwrap().contains(s) }
 }
-fn contextual_keyword_to_name(v: &ContextualKeyword) -> &'static str {
-  unsafe {
-    CONTEXTUAL_KEYWORD_KEY_NAME
-      .as_ref()
-      .unwrap()
-      .get(v)
-      .unwrap()
-  }
+pub fn ctx_keyword_to_name(v: &CtxKeyword) -> &'static str {
+  unsafe { CTX_KEYWORD_KEY_NAME.as_ref().unwrap().get(v).unwrap() }
 }
-fn name_to_contextual_keyword(s: &str) -> &ContextualKeyword {
+pub fn name_to_ctx_keyword(s: &str) -> CtxKeyword {
   unsafe {
-    CONTEXTUAL_KEYWORD_NAME_KEY
+    CTX_KEYWORD_NAME_KEY
       .as_ref()
       .unwrap()
       .get(s)
       .unwrap()
+      .to_owned()
   }
 }
-impl ContextualKeyword {
+impl CtxKeyword {
   pub fn name(&self) -> &'static str {
-    contextual_keyword_to_name(self)
+    ctx_keyword_to_name(self)
+  }
+
+  pub fn is_before_expr(&self) -> bool {
+    unsafe { CTX_KEYWORD_BEFORE_EXPR_SET.as_ref().unwrap().contains(self) }
   }
 }
 
 pub struct IdentifierData {
   pub value: String,
-  pub loc: Location,
+  pub loc: SourceLoc,
 }
 
 pub struct NullLiteralData {
-  pub loc: Location,
+  pub loc: SourceLoc,
+}
+pub fn is_null(s: &str) -> bool {
+  s == "null"
 }
 
 pub enum BooleanLiteral {
@@ -348,41 +394,74 @@ pub enum BooleanLiteral {
 }
 pub struct BooleanLiteralData {
   pub kind: BooleanLiteral,
-  pub loc: Location,
+  pub loc: SourceLoc,
+}
+pub fn is_bool(s: &str) -> bool {
+  s == "true" || s == "false"
+}
+pub fn name_to_bool(s: &str) -> BooleanLiteral {
+  match s {
+    "true" => BooleanLiteral::True,
+    "false" => BooleanLiteral::False,
+    _ => panic!(),
+  }
+}
+impl BooleanLiteral {
+  pub fn name(&self) -> &'static str {
+    match self {
+      BooleanLiteral::True => "true",
+      BooleanLiteral::False => "false",
+    }
+  }
 }
 
 pub struct StringLiteralData {
   pub value: String,
-  pub loc: Location,
+  pub loc: SourceLoc,
 }
 
 pub struct NumericLiteralData {
   pub value: String,
-  pub loc: Location,
+  pub loc: SourceLoc,
 }
 
 pub struct RegExpLiteralData {
   pub value: String,
-  pub loc: Location,
+  pub loc: SourceLoc,
 }
 
 pub enum Token {
   Keyword(KeywordData),
   Symbol(SymbolData),
-  ContextualKeyword(ContextualKeywordData),
+  ContextualKeyword(CtxKeywordData),
   Identifier(IdentifierData),
   NullLiteral(NullLiteralData),
   BooleanLiteral(BooleanLiteralData),
   StringLiteral(StringLiteralData),
   NumericLiteral(NumericLiteralData),
   RegExpLiteral(RegExpLiteralData),
+  Nil,
 }
 
 impl Token {
+  pub fn is_keyword(&self) -> bool {
+    match self {
+      Token::Keyword(_) => true,
+      _ => false,
+    }
+  }
+
   pub fn keyword_data(&self) -> Option<&KeywordData> {
     match self {
       Token::Keyword(data) => Some(data),
       _ => None,
+    }
+  }
+
+  pub fn is_symbol(&self) -> bool {
+    match self {
+      Token::Symbol(_) => true,
+      _ => false,
     }
   }
 
@@ -393,10 +472,24 @@ impl Token {
     }
   }
 
-  pub fn ctx_keyword_data(&self) -> Option<&ContextualKeywordData> {
+  pub fn is_ctx_keyword(&self) -> bool {
+    match self {
+      Token::ContextualKeyword(_) => true,
+      _ => false,
+    }
+  }
+
+  pub fn ctx_keyword_data(&self) -> Option<&CtxKeywordData> {
     match self {
       Token::ContextualKeyword(data) => Some(data),
       _ => None,
+    }
+  }
+
+  pub fn is_id(&self) -> bool {
+    match self {
+      Token::Identifier(_) => true,
+      _ => false,
     }
   }
 
@@ -407,10 +500,24 @@ impl Token {
     }
   }
 
-  pub fn null_literal_data(&self) -> Option<&NumericLiteralData> {
+  pub fn is_null(&self) -> bool {
     match self {
-      Token::NumericLiteral(data) => Some(data),
+      Token::NullLiteral(_) => true,
+      _ => false,
+    }
+  }
+
+  pub fn null_literal_data(&self) -> Option<&NullLiteralData> {
+    match self {
+      Token::NullLiteral(data) => Some(data),
       _ => None,
+    }
+  }
+
+  pub fn is_bool(&self) -> bool {
+    match self {
+      Token::BooleanLiteral(_) => true,
+      _ => false,
     }
   }
 
@@ -421,10 +528,24 @@ impl Token {
     }
   }
 
+  pub fn is_str(&self) -> bool {
+    match self {
+      Token::StringLiteral(_) => true,
+      _ => false,
+    }
+  }
+
   pub fn str_literal_data(&self) -> Option<&StringLiteralData> {
     match self {
       Token::StringLiteral(data) => Some(data),
       _ => None,
+    }
+  }
+
+  pub fn is_num(&self) -> bool {
+    match self {
+      Token::NumericLiteral(_) => true,
+      _ => false,
     }
   }
 
@@ -435,10 +556,26 @@ impl Token {
     }
   }
 
+  pub fn is_regexp(&self) -> bool {
+    match self {
+      Token::RegExpLiteral(_) => true,
+      _ => false,
+    }
+  }
+
   pub fn regexp_literal_data(&self) -> Option<&RegExpLiteralData> {
     match self {
       Token::RegExpLiteral(data) => Some(data),
       _ => None,
+    }
+  }
+
+  pub fn is_before_expr(&self) -> bool {
+    match self {
+      Token::Keyword(data) => data.kind.is_before_expr(),
+      Token::Symbol(data) => data.kind.is_before_expr(),
+      Token::ContextualKeyword(data) => data.kind.is_before_expr(),
+      _ => false,
     }
   }
 }
@@ -448,7 +585,7 @@ pub fn init_token_data() {
   INIT_TOKEN_DATA_ONCE.call_once(|| {
     init_keywords();
     init_symbols();
-    init_contextual_keyword();
+    init_ctx_keyword();
   });
 }
 
@@ -461,7 +598,7 @@ mod token_tests {
     init_token_data();
     assert_eq!("break", Keyword::Break.name());
     assert_eq!("}", Symbol::BraceR.name());
-    assert_eq!("yield", ContextualKeyword::Yield.name());
+    assert_eq!("yield", CtxKeyword::Yield.name());
   }
 
   #[test]
@@ -469,6 +606,9 @@ mod token_tests {
     init_token_data();
     assert!(is_keyword("break"));
     assert!(is_symbol("{"));
-    assert!(is_contextual_keyword("implements"));
+    assert!(is_ctx_keyword("implements"));
+    assert!(Symbol::Assign.is_before_expr());
+    assert!(Keyword::Return.is_before_expr());
+    assert!(CtxKeyword::Yield.is_before_expr());
   }
 }
