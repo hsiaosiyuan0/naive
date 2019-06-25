@@ -60,10 +60,10 @@ pub enum Keyword {
 }
 
 // `$be` denotes the `beforeExpr` attribute of token.
-// Since the grammar of regexp of js is a island grammar when see it at the point of view of whole js grammar,
+// Since the grammar of regexp of js is a island grammar when see it at the point of view of the whole js grammar,
 // we have two opportunities to process that island grammar, either at tokenizing phase or parsing phase.
 //
-// Here we use a manner which is taken from [acorn](https://github.com/acornjs/acorn/blob/master/acorn/src/tokentype.js),
+// Here we use a manner taken from [acorn](https://github.com/acornjs/acorn/blob/master/acorn/src/tokentype.js),
 // it attaches a `beforeExpr` attribute to each token type to indicate that the slashes after those tokens
 // would be the beginning of regexp if the value of their `beforeExpr` attributes are `true`,
 // it works at tokenizing phase therefore it can obey the definition of regexp to produce RegExprLiteral tokens.

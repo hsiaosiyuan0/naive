@@ -198,8 +198,8 @@ impl<'a> Lexer<'a> {
 
   // we use the prior read char as a barrier which is passed by the formal parameter `bs`,
   // if bs is `\` then we can consider the next 4 characters must be a valid unicode escaping,
-  // we try to turn the valid unicode escaping to a char then return the escaped char if the turning
-  // is succeed otherwise a lexer error is returned
+  // we try to turn the valid unicode escaping to it's associated char and return that char,
+  // otherwise a lexer error is returned
   fn read_escape_unicode(&mut self, bs: char) -> Result<char, LexError> {
     if bs == '\\' && self.src.test_ahead('u') {
       self.src.advance();
@@ -320,7 +320,7 @@ impl<'a> Lexer<'a> {
     }
     // here we process the fractional part
     // if decimal starts with dot then next digits is required to be present
-    // if decimal starts non-zero digit then the digits in fractional part is optional
+    // if decimal starts non-zero digit then the digits of fractional part is optional
     if self.src.test_ahead('.') {
       ret.push(self.src.read().unwrap());
       let digits = self.read_decimal_digits();
@@ -431,7 +431,7 @@ impl<'a> Lexer<'a> {
             }
             return Err(LexError::new(self.errmsg()));
           }
-          // we already check each char is a valid hex digit
+          // we've already check each char is a valid hex digit
           // so the entire hex digits can be safely converted to u32
           let hex = str::from_utf8(&hex).unwrap();
           c = char::from_u32(u32::from_str_radix(hex, 16).ok().unwrap()).unwrap()
