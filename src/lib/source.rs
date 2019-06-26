@@ -118,6 +118,10 @@ impl<'a> Source<'a> {
     self.test_ahead_chs(&[c1, c2])
   }
 
+  pub fn test_ahead3(&mut self, c1: char, c2: char, c3: char) -> bool {
+    self.test_ahead_chs(&[c1, c2, c3])
+  }
+
   pub fn advance(&mut self) {
     self.read();
   }

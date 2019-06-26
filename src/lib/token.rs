@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Once;
 
+#[derive(Copy, Clone)]
 pub struct Position {
   pub line: i32,
   pub column: i32,
@@ -12,9 +13,19 @@ impl Position {
   }
 }
 
+#[derive(Copy, Clone)]
 pub struct SourceLoc {
   pub start: Position,
   pub end: Position,
+}
+
+impl SourceLoc {
+  pub fn new() -> Self {
+    SourceLoc {
+      start: Position::new(),
+      end: Position::new(),
+    }
+  }
 }
 
 pub struct KeywordData {
@@ -87,6 +98,23 @@ macro_rules! gen_map {
         be.insert($k);
       )*
       (Some(s), Some(kv), Some(vk), Some(be))
+    }
+  };
+}
+
+macro_rules! gen_map_syb {
+  ($($k:expr => $v:expr, $be:expr, $pcd:expr)*) => {
+    {
+      let (s, kv, vk, be) = gen_map! {
+        $(
+          $k => $v, $be
+        )*
+      };
+      let mut pcdm = HashMap::new();
+      $(
+        pcdm.insert($k, $pcd);
+      )*
+      (s, kv, vk, be, Some(pcdm))
     }
   };
 }
@@ -225,62 +253,64 @@ static mut SYMBOLS_SET: Option<HashSet<&'static str>> = None;
 static mut SYMBOLS_KEY_NAME: Option<HashMap<Symbol, &'static str>> = None;
 static mut SYMBOLS_NAME_KEY: Option<HashMap<&'static str, Symbol>> = None;
 static mut SYMBOLS_BEFORE_EXPR_SET: Option<HashSet<Symbol>> = None;
+static mut SYMBOLS_KEY_PRECEDENCE: Option<HashMap<Symbol, i32>> = None;
 fn init_symbols() {
-  let (s, kv, vk, be) = gen_map! {
-    Symbol::BraceL => "{", true
-    Symbol::BraceR => "}", false
-    Symbol::ParenL => "(", true
-    Symbol::ParenR => ")", false
-    Symbol::BracketL => "[", true
-    Symbol::BracketR => "]", false
-    Symbol::Dot => ".", true
-    Symbol::Semi => ";", true
-    Symbol::Comma => ",", true
-    Symbol::LT => "<", true
-    Symbol::GT => ">", true
-    Symbol::LE => "<=", true
-    Symbol::GE => ">=", true
-    Symbol::Eq => "==", true
-    Symbol::NotEq => "!=", true
-    Symbol::EqStrict => "===", true
-    Symbol::NotEqStrict => "!==", true
-    Symbol::Add => "+", true
-    Symbol::Sub => "-", true
-    Symbol::Mul => "*", true
-    Symbol::Div => "/", true
-    Symbol::Mod => "%", true
-    Symbol::Inc => "++", false
-    Symbol::Dec => "--", false
-    Symbol::SHL => "<<", true
-    Symbol::SAR => ">>", true
-    Symbol::SHR => ">>>", true
-    Symbol::BitAnd => "&", true
-    Symbol::BitOr => "|", true
-    Symbol::BitXor => "^", true
-    Symbol::Not => "!", true
-    Symbol::BitNot => "~", true
-    Symbol::And => "&&", true
-    Symbol::Or => "||", true
-    Symbol::Conditional => "?", true
-    Symbol::Colon => ":", true
-    Symbol::Assign => "=", true
-    Symbol::AssignAdd => "+=", true
-    Symbol::AssignSub => "-=", true
-    Symbol::AssignMul => "*=", true
-    Symbol::AssignDiv => "/=", true
-    Symbol::AssignMod => "%=", true
-    Symbol::AssignSHL => "<<=", true
-    Symbol::AssignSAR => ">>=", true
-    Symbol::AssignSHR => ">>>=", true
-    Symbol::AssignBitAnd => "&=", true
-    Symbol::AssignBitOr => "|=", true
-    Symbol::AssignBitXor => "^=", true
+  let (s, kv, vk, be, pcd) = gen_map_syb! {
+    Symbol::BraceL => "{", true, 0
+    Symbol::BraceR => "}", false, 0
+    Symbol::ParenL => "(", true, 20
+    Symbol::ParenR => ")", false, 0
+    Symbol::BracketL => "[", true, 19
+    Symbol::BracketR => "]", false, 0
+    Symbol::Dot => ".", true, 19
+    Symbol::Semi => ";", true, 0
+    Symbol::Comma => ",", true, 1
+    Symbol::LT => "<", true, 11
+    Symbol::GT => ">", true, 11
+    Symbol::LE => "<=", true, 11
+    Symbol::GE => ">=", true, 11
+    Symbol::Eq => "==", true, 10
+    Symbol::NotEq => "!=", true, 10
+    Symbol::EqStrict => "===", true, 10
+    Symbol::NotEqStrict => "!==", true, 10
+    Symbol::Add => "+", true, 13
+    Symbol::Sub => "-", true, 13
+    Symbol::Mul => "*", true, 14
+    Symbol::Div => "/", true, 14
+    Symbol::Mod => "%", true, 14
+    Symbol::Inc => "++", false, 16
+    Symbol::Dec => "--", false, 16
+    Symbol::SHL => "<<", true, 12
+    Symbol::SAR => ">>", true, 12
+    Symbol::SHR => ">>>", true, 12
+    Symbol::BitAnd => "&", true, 9
+    Symbol::BitOr => "|", true, 7
+    Symbol::BitXor => "^", true, 8
+    Symbol::Not => "!", true, 16
+    Symbol::BitNot => "~", true, 16
+    Symbol::And => "&&", true, 6
+    Symbol::Or => "||", true, 5
+    Symbol::Conditional => "?", true, 4
+    Symbol::Colon => ":", true, 4
+    Symbol::Assign => "=", true, 3
+    Symbol::AssignAdd => "+=", true, 3
+    Symbol::AssignSub => "-=", true, 3
+    Symbol::AssignMul => "*=", true, 3
+    Symbol::AssignDiv => "/=", true, 3
+    Symbol::AssignMod => "%=", true, 3
+    Symbol::AssignSHL => "<<=", true, 3
+    Symbol::AssignSAR => ">>=", true, 3
+    Symbol::AssignSHR => ">>>=", true, 3
+    Symbol::AssignBitAnd => "&=", true, 3
+    Symbol::AssignBitOr => "|=", true, 3
+    Symbol::AssignBitXor => "^=", true, 3
   };
   unsafe {
     SYMBOLS_SET = s;
     SYMBOLS_KEY_NAME = kv;
     SYMBOLS_NAME_KEY = vk;
     SYMBOLS_BEFORE_EXPR_SET = be;
+    SYMBOLS_KEY_PRECEDENCE = pcd;
   }
 }
 pub fn is_symbol(s: &str) -> bool {
@@ -388,6 +418,7 @@ pub fn is_null(s: &str) -> bool {
   s == "null"
 }
 
+#[derive(Eq, PartialEq)]
 pub enum BooleanLiteral {
   True,
   False,
@@ -451,10 +482,17 @@ impl Token {
     }
   }
 
-  pub fn keyword_data(&self) -> Option<&KeywordData> {
+  pub fn is_keyword_kind(&self, k: Keyword) -> bool {
     match self {
-      Token::Keyword(data) => Some(data),
-      _ => None,
+      Token::Keyword(data) => data.kind == k,
+      _ => false,
+    }
+  }
+
+  pub fn keyword_data(&self) -> &KeywordData {
+    match self {
+      Token::Keyword(data) => data,
+      _ => panic!(),
     }
   }
 
@@ -465,10 +503,17 @@ impl Token {
     }
   }
 
-  pub fn symbol_data(&self) -> Option<&SymbolData> {
+  pub fn is_symbol_kind(&self, k: Symbol) -> bool {
     match self {
-      Token::Symbol(data) => Some(data),
-      _ => None,
+      Token::Symbol(s) => s.kind == k,
+      _ => false,
+    }
+  }
+
+  pub fn symbol_data(&self) -> &SymbolData {
+    match self {
+      Token::Symbol(data) => data,
+      _ => panic!(),
     }
   }
 
@@ -479,10 +524,10 @@ impl Token {
     }
   }
 
-  pub fn ctx_keyword_data(&self) -> Option<&CtxKeywordData> {
+  pub fn ctx_keyword_data(&self) -> &CtxKeywordData {
     match self {
-      Token::ContextualKeyword(data) => Some(data),
-      _ => None,
+      Token::ContextualKeyword(data) => data,
+      _ => panic!(),
     }
   }
 
@@ -493,10 +538,10 @@ impl Token {
     }
   }
 
-  pub fn id_data(&self) -> Option<&IdentifierData> {
+  pub fn id_data(&self) -> &IdentifierData {
     match self {
-      Token::Identifier(data) => Some(data),
-      _ => None,
+      Token::Identifier(data) => data,
+      _ => panic!(),
     }
   }
 
@@ -507,10 +552,10 @@ impl Token {
     }
   }
 
-  pub fn null_literal_data(&self) -> Option<&NullLiteralData> {
+  pub fn null_data(&self) -> &NullLiteralData {
     match self {
-      Token::NullLiteral(data) => Some(data),
-      _ => None,
+      Token::NullLiteral(data) => data,
+      _ => panic!(),
     }
   }
 
@@ -521,10 +566,10 @@ impl Token {
     }
   }
 
-  pub fn bool_literal_data(&self) -> Option<&BooleanLiteralData> {
+  pub fn bool_data(&self) -> &BooleanLiteralData {
     match self {
-      Token::BooleanLiteral(data) => Some(data),
-      _ => None,
+      Token::BooleanLiteral(data) => data,
+      _ => panic!(),
     }
   }
 
@@ -535,10 +580,10 @@ impl Token {
     }
   }
 
-  pub fn str_literal_data(&self) -> Option<&StringLiteralData> {
+  pub fn str_data(&self) -> &StringLiteralData {
     match self {
-      Token::StringLiteral(data) => Some(data),
-      _ => None,
+      Token::StringLiteral(data) => data,
+      _ => panic!(),
     }
   }
 
@@ -549,10 +594,10 @@ impl Token {
     }
   }
 
-  pub fn num_literal_data(&self) -> Option<&NumericLiteralData> {
+  pub fn num_data(&self) -> &NumericLiteralData {
     match self {
-      Token::NumericLiteral(data) => Some(data),
-      _ => None,
+      Token::NumericLiteral(data) => data,
+      _ => panic!(),
     }
   }
 
@@ -563,10 +608,10 @@ impl Token {
     }
   }
 
-  pub fn regexp_literal_data(&self) -> Option<&RegExpLiteralData> {
+  pub fn regexp_data(&self) -> &RegExpLiteralData {
     match self {
-      Token::RegExpLiteral(data) => Some(data),
-      _ => None,
+      Token::RegExpLiteral(data) => data,
+      _ => panic!(),
     }
   }
 
@@ -576,6 +621,21 @@ impl Token {
       Token::Symbol(data) => data.kind.is_before_expr(),
       Token::ContextualKeyword(data) => data.kind.is_before_expr(),
       _ => false,
+    }
+  }
+
+  pub fn loc(&self) -> &SourceLoc {
+    match self {
+      Token::Keyword(data) => &data.loc,
+      Token::Symbol(data) => &data.loc,
+      Token::ContextualKeyword(data) => &data.loc,
+      Token::Identifier(data) => &data.loc,
+      Token::NullLiteral(data) => &data.loc,
+      Token::BooleanLiteral(data) => &data.loc,
+      Token::StringLiteral(data) => &data.loc,
+      Token::NumericLiteral(data) => &data.loc,
+      Token::RegExpLiteral(data) => &data.loc,
+      Token::Nil => panic!(),
     }
   }
 }

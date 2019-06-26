@@ -1,16 +1,22 @@
 use crate::source::*;
 use crate::token::*;
-use core::borrow::BorrowMut;
 use std::char;
+use std::collections::VecDeque;
 use std::rc::Rc;
 use std::str;
 use std::u32;
 use unic_ucd::GeneralCategory;
 
+pub struct TokenNextNewline {
+  tok: Rc<Token>,
+  next_is_line_terminator: bool,
+}
+
 pub struct Lexer<'a> {
   src: Source<'a>,
   tok: Rc<Token>,
   next_is_line_terminator: bool,
+  peeked: VecDeque<TokenNextNewline>,
 }
 
 pub struct LexError {
@@ -105,29 +111,57 @@ impl<'a> Lexer<'a> {
       src,
       tok: Rc::new(Token::Nil),
       next_is_line_terminator: false,
+      peeked: VecDeque::new(),
+    }
+  }
+
+  fn next_(&mut self) -> Result<Token, LexError> {
+    self.skip_whitespace();
+    if self.ahead_is_id_start() {
+      self.read_name()
+    } else if self.ahead_is_decimal_int() {
+      self.read_numeric()
+    } else if self.ahead_is_string_start() {
+      let t = self.src.read().unwrap();
+      self.read_string(t)
+    } else {
+      self.read_symbol()
+    }
+  }
+
+  pub fn peek(&mut self) -> Result<Rc<Token>, LexError> {
+    match self.peeked.front() {
+      Some(tok) => Ok(tok.tok.clone()),
+      _ => match self.next_() {
+        Ok(tok) => {
+          let tok = Rc::new(tok);
+          let next_is_line_terminator = self.ahead_is_line_terminator_or_eof();
+          self.peeked.push_back(TokenNextNewline {
+            tok: tok.clone(),
+            next_is_line_terminator,
+          });
+          Ok(tok)
+        }
+        Err(e) => Err(e),
+      },
     }
   }
 
   pub fn next(&mut self) -> Result<Rc<Token>, LexError> {
-    self.skip_whitespace();
-    let mut ret: Result<Token, LexError> = Err(LexError::default());
-    if self.ahead_is_id_start() {
-      ret = self.read_name();
-    } else if self.ahead_is_decimal_int() {
-      ret = self.read_numeric();
-    } else if self.ahead_is_string_start() {
-      let t = self.src.read().unwrap();
-      ret = self.read_string(t);
-    } else {
-      ret = self.read_symbol();
-    }
-    match ret {
-      Ok(tok) => {
-        self.tok = Rc::new(tok);
-        self.next_is_line_terminator = self.ahead_is_line_terminator_or_eof();
+    match self.peeked.pop_front() {
+      Some(tn) => {
+        self.tok = tn.tok;
+        self.next_is_line_terminator = tn.next_is_line_terminator;
         Ok(self.tok.clone())
       }
-      Err(e) => Err(e),
+      _ => match self.next_() {
+        Ok(tok) => {
+          self.tok = Rc::new(tok);
+          self.next_is_line_terminator = self.ahead_is_line_terminator_or_eof();
+          Ok(self.tok.clone())
+        }
+        Err(e) => Err(e),
+      },
     }
   }
 
@@ -367,7 +401,7 @@ impl<'a> Lexer<'a> {
 
   fn ahead_is_decimal_int(&mut self) -> bool {
     if let Some(c) = self.src.peek() {
-      c != '0' && c.is_ascii_digit() || c == '.'
+      c.is_ascii_digit() || c == '.'
     } else {
       false
     }
@@ -607,7 +641,95 @@ impl<'a> Lexer<'a> {
       if self.ahead_is_whitespace_or_eof() {
         break;
       }
-      s.push(self.src.read().unwrap());
+      let c = self.src.peek().unwrap();
+      match c {
+        '{' | '}' | '(' | ')' | '[' | ']' | '.' | ';' | ',' | '?' | ':' => {
+          s.push(self.src.read().unwrap());
+          break;
+        }
+        '<' => {
+          // < <<= << <=
+          s.push(self.src.read().unwrap());
+          if self.src.test_ahead2('<', '=') {
+            s.push(self.src.read().unwrap());
+            s.push(self.src.read().unwrap());
+          } else if self.src.test_ahead_or('<', '=') {
+            s.push(self.src.read().unwrap());
+          }
+          break;
+        }
+        '>' => {
+          // > >>>= >>= >> >=
+          s.push(self.src.read().unwrap());
+          if self.src.test_ahead3('>', '>', '=') {
+            s.push(self.src.read().unwrap());
+            s.push(self.src.read().unwrap());
+            s.push(self.src.read().unwrap());
+          } else if self.src.test_ahead2('>', '=') {
+            s.push(self.src.read().unwrap());
+            s.push(self.src.read().unwrap());
+          } else if self.src.test_ahead_or('>', '=') {
+            s.push(self.src.read().unwrap());
+          }
+          break;
+        }
+        '=' => {
+          // = === ==
+          s.push(self.src.read().unwrap());
+          if self.src.test_ahead2('=', '=') {
+            s.push(self.src.read().unwrap());
+            s.push(self.src.read().unwrap());
+          } else if self.src.test_ahead('=') {
+            s.push(self.src.read().unwrap());
+          }
+        }
+        '!' => {
+          // ! != !==
+          s.push(self.src.read().unwrap());
+          if self.src.test_ahead2('=', '=') {
+            s.push(self.src.read().unwrap());
+            s.push(self.src.read().unwrap());
+          } else if self.src.test_ahead('=') {
+            s.push(self.src.read().unwrap());
+          }
+        }
+        '+' => {
+          // + ++ +=
+          s.push(self.src.read().unwrap());
+          if self.src.test_ahead_or('+', '=') {
+            s.push(self.src.read().unwrap());
+          }
+        }
+        '-' => {
+          // - -- -=
+          s.push(self.src.read().unwrap());
+          if self.src.test_ahead_or('-', '=') {
+            s.push(self.src.read().unwrap());
+          }
+        }
+        '&' => {
+          // & && &=
+          s.push(self.src.read().unwrap());
+          if self.src.test_ahead_or('&', '=') {
+            s.push(self.src.read().unwrap());
+          }
+        }
+        '|' => {
+          // | || |=
+          s.push(self.src.read().unwrap());
+          if self.src.test_ahead_or('|', '=') {
+            s.push(self.src.read().unwrap());
+          }
+        }
+        '*' | '/' | '%' | '^' | '~' => {
+          // pattern pattern=
+          s.push(self.src.read().unwrap());
+          if self.src.test_ahead('=') {
+            s.push(self.src.read().unwrap());
+          }
+        }
+        _ => return Err(LexError::new(self.errmsg())),
+      }
     }
     let s: String = s.into_iter().collect();
     if is_symbol(&s) {
@@ -616,7 +738,7 @@ impl<'a> Lexer<'a> {
         loc: self.fin_loc(loc),
       }))
     } else {
-      Err(LexError::default())
+      Err(LexError::new(self.errmsg()))
     }
   }
 
@@ -752,27 +874,27 @@ mod lexer_tests {
     let src = Source::new(&code);
     let mut lex = Lexer::new(src);
     let mut tok = lex.read_name().ok().unwrap();
-    assert_eq!("\u{01c5}\u{0920}", tok.id_data().unwrap().value);
+    assert_eq!("\u{01c5}\u{0920}", tok.id_data().value);
 
     lex.skip_whitespace();
     tok = lex.read_name().ok().unwrap();
-    assert_eq!("a", tok.id_data().unwrap().value);
+    assert_eq!("a", tok.id_data().value);
 
     lex.skip_whitespace();
     tok = lex.read_name().ok().unwrap();
-    assert_eq!("a\u{1885}", tok.id_data().unwrap().value);
+    assert_eq!("a\u{1885}", tok.id_data().value);
 
     lex.skip_whitespace();
     tok = lex.read_name().ok().unwrap();
-    assert_eq!("break", tok.keyword_data().unwrap().kind.name());
+    assert_eq!("break", tok.keyword_data().kind.name());
 
     lex.skip_whitespace();
     tok = lex.read_name().ok().unwrap();
-    assert_eq!("let", tok.ctx_keyword_data().unwrap().kind.name());
+    assert_eq!("let", tok.ctx_keyword_data().kind.name());
 
     lex.skip_whitespace();
     tok = lex.read_name().ok().unwrap();
-    assert_eq!("true", tok.bool_literal_data().unwrap().kind.name());
+    assert_eq!("true", tok.bool_data().kind.name());
 
     lex.skip_whitespace();
     tok = lex.read_name().ok().unwrap();
@@ -806,19 +928,19 @@ mod lexer_tests {
     let src = Source::new(&code);
     let mut lex = Lexer::new(src);
     let mut tok = lex.read_numeric().ok().unwrap();
-    assert_eq!("1", tok.num_literal_data().unwrap().value);
+    assert_eq!("1", tok.num_data().value);
 
     lex.skip_whitespace();
     tok = lex.read_numeric().ok().unwrap();
-    assert_eq!(".1e1", tok.num_literal_data().unwrap().value);
+    assert_eq!(".1e1", tok.num_data().value);
 
     lex.skip_whitespace();
     tok = lex.read_numeric().ok().unwrap();
-    assert_eq!("0xa1", tok.num_literal_data().unwrap().value);
+    assert_eq!("0xa1", tok.num_data().value);
 
     lex.skip_whitespace();
     tok = lex.read_numeric().ok().unwrap();
-    assert_eq!("0X123", tok.num_literal_data().unwrap().value);
+    assert_eq!("0X123", tok.num_data().value);
   }
 
   #[test]
@@ -844,29 +966,23 @@ mod lexer_tests {
   fn next() {
     init_token_data();
 
-    let code = String::from("'hello world' break { /test/ig");
+    let code = String::from("'hello world' break {} /test/ig");
     let src = Source::new(&code);
     let mut lex = Lexer::new(src);
     let mut tok = lex.next();
-    assert_eq!(
-      "hello world",
-      tok.ok().unwrap().str_literal_data().unwrap().value
-    );
+    assert_eq!("hello world", tok.ok().unwrap().str_data().value);
 
     tok = lex.next();
-    assert_eq!(
-      "break",
-      tok.ok().unwrap().keyword_data().unwrap().kind.name()
-    );
+    assert_eq!("break", tok.ok().unwrap().keyword_data().kind.name());
 
     tok = lex.next();
-    assert_eq!("{", tok.ok().unwrap().symbol_data().unwrap().kind.name());
+    assert_eq!("{", tok.ok().unwrap().symbol_data().kind.name());
 
     tok = lex.next();
-    assert_eq!(
-      "/test/ig",
-      tok.ok().unwrap().regexp_literal_data().unwrap().value
-    );
+    assert_eq!("}", tok.ok().unwrap().symbol_data().kind.name());
+
+    tok = lex.next();
+    assert_eq!("/test/ig", tok.ok().unwrap().regexp_data().value);
   }
 
   #[test]
@@ -877,7 +993,7 @@ mod lexer_tests {
     let src = Source::new(&code);
     let mut lex = Lexer::new(src);
     let mut tok = lex.next().ok().unwrap();
-    let mut td = tok.id_data().unwrap();
+    let mut td = tok.id_data();
     assert_eq!("a", td.value);
     let mut loc = &td.loc;
     assert_eq!(1, loc.start.line);
@@ -886,7 +1002,7 @@ mod lexer_tests {
     assert_eq!(1, loc.end.column);
 
     tok = lex.next().ok().unwrap();
-    td = tok.id_data().unwrap();
+    td = tok.id_data();
     loc = &td.loc;
     assert_eq!(2, loc.start.line);
     assert_eq!(2, loc.start.column);
