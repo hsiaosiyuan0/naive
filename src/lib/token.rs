@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Once;
 
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct Position {
   pub line: i32,
   pub column: i32,
@@ -13,7 +13,7 @@ impl Position {
   }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct SourceLoc {
   pub start: Position,
   pub end: Position,
@@ -28,11 +28,12 @@ impl SourceLoc {
   }
 }
 
+#[derive(Debug, Copy, Clone)]
 pub struct KeywordData {
   pub kind: Keyword,
   pub loc: SourceLoc,
 }
-#[derive(Eq, PartialEq, Hash, Copy, Clone)]
+#[derive(Debug, Eq, PartialEq, Hash, Copy, Clone)]
 pub enum Keyword {
   Break,
   Do,
@@ -193,7 +194,7 @@ impl Keyword {
   }
 }
 
-#[derive(Eq, PartialEq, Hash, Copy, Clone)]
+#[derive(Debug, Eq, PartialEq, Hash, Copy, Clone)]
 pub enum Symbol {
   BraceL,
   BraceR,
@@ -244,6 +245,8 @@ pub enum Symbol {
   AssignBitOr,
   AssignBitXor,
 }
+
+#[derive(Debug, Clone)]
 pub struct SymbolData {
   pub kind: Symbol,
   pub loc: SourceLoc,
@@ -339,7 +342,7 @@ impl Symbol {
   }
 }
 
-#[derive(Eq, PartialEq, Hash, Copy, Clone)]
+#[derive(Debug, Eq, PartialEq, Hash, Copy, Clone)]
 pub enum CtxKeyword {
   Implements,
   Let,
@@ -351,6 +354,8 @@ pub enum CtxKeyword {
   Static,
   Yield,
 }
+
+#[derive(Debug, Clone)]
 pub struct CtxKeywordData {
   pub kind: CtxKeyword,
   pub loc: SourceLoc,
@@ -406,11 +411,13 @@ impl CtxKeyword {
   }
 }
 
+#[derive(Debug, Clone)]
 pub struct IdentifierData {
   pub value: String,
   pub loc: SourceLoc,
 }
 
+#[derive(Debug, Clone)]
 pub struct NullLiteralData {
   pub loc: SourceLoc,
 }
@@ -418,11 +425,13 @@ pub fn is_null(s: &str) -> bool {
   s == "null"
 }
 
-#[derive(Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub enum BooleanLiteral {
   True,
   False,
 }
+
+#[derive(Debug, Clone)]
 pub struct BooleanLiteralData {
   pub kind: BooleanLiteral,
   pub loc: SourceLoc,
@@ -446,21 +455,25 @@ impl BooleanLiteral {
   }
 }
 
+#[derive(Debug, Clone)]
 pub struct StringLiteralData {
   pub value: String,
   pub loc: SourceLoc,
 }
 
+#[derive(Debug, Clone)]
 pub struct NumericLiteralData {
   pub value: String,
   pub loc: SourceLoc,
 }
 
+#[derive(Debug, Clone)]
 pub struct RegExpLiteralData {
   pub value: String,
   pub loc: SourceLoc,
 }
 
+#[derive(Debug, Clone)]
 pub enum Token {
   Keyword(KeywordData),
   Symbol(SymbolData),

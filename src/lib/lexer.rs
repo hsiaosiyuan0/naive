@@ -165,6 +165,13 @@ impl<'a> Lexer<'a> {
     }
   }
 
+  pub fn advance(&mut self) {
+    match self.next() {
+      Ok(_) => (),
+      Err(e) => panic!(e.msg),
+    }
+  }
+
   fn read_unicode_escape_seq(&mut self) -> Option<char> {
     let mut hex = [0, 0, 0, 0];
     for i in 0..hex.len() {
@@ -401,7 +408,17 @@ impl<'a> Lexer<'a> {
 
   fn ahead_is_decimal_int(&mut self) -> bool {
     if let Some(c) = self.src.peek() {
-      c.is_ascii_digit() || c == '.'
+      if c == '.' {
+        match self.src.chs.next() {
+          Some(cc) => {
+            self.src.peeked.push_back(cc);
+            cc.is_ascii_digit()
+          }
+          _ => false,
+        }
+      } else {
+        c.is_ascii_digit()
+      }
     } else {
       false
     }

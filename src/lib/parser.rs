@@ -4,36 +4,36 @@ use core::borrow::Borrow;
 use std::ops::Deref;
 use std::rc::Rc;
 
-pub struct ParserErr {
+pub struct ParserError {
   pub msg: String,
 }
 
-impl ParserErr {
+impl ParserError {
   pub fn new(msg: String) -> Self {
-    ParserErr { msg }
+    ParserError { msg }
   }
 
   pub fn default() -> Self {
-    ParserErr {
+    ParserError {
       msg: "".to_string(),
     }
   }
 }
 
-pub enum ParserError {
-  Parser(ParserErr),
+pub enum ParsingError {
+  Parser(ParserError),
   Lexer(LexError),
 }
 
-impl From<ParserErr> for ParserError {
-  fn from(e: ParserErr) -> Self {
-    ParserError::Parser(e)
+impl From<ParserError> for ParsingError {
+  fn from(e: ParserError) -> Self {
+    ParsingError::Parser(e)
   }
 }
 
-impl From<LexError> for ParserError {
+impl From<LexError> for ParsingError {
   fn from(e: LexError) -> Self {
-    ParserError::Lexer(e)
+    ParsingError::Lexer(e)
   }
 }
 
@@ -53,14 +53,14 @@ impl<'a> Parser<'a> {
     )
   }
 
-  fn expr(&mut self) -> Result<Expr, ParserError> {
-    match self.primary_expr() {
-      Ok(expr) => Ok(expr.into()),
+  fn expr(&mut self) -> Result<Expr, ParsingError> {
+    match self.expr_op(None, 0) {
+      Ok(expr) => Ok(expr),
       Err(e) => Err(e),
     }
   }
 
-  fn primary_expr(&mut self) -> Result<PrimaryExpr, ParserError> {
+  fn primary_expr(&mut self) -> Result<PrimaryExpr, ParsingError> {
     match self.lexer.next() {
       Ok(tok) => {
         let loc = tok.loc().to_owned();
@@ -79,14 +79,99 @@ impl<'a> Parser<'a> {
         } else if tok.is_symbol_kind(Symbol::BracketL) {
           self.array_literal(&tok)
         } else {
-          Err(ParserErr::new(self.errmsg(tok.loc())).into())
+          Err(ParserError::new(self.errmsg(tok.loc())).into())
         }
       }
       Err(e) => Err(e.into()),
     }
   }
 
-  fn array_literal(&mut self, open: &Token) -> Result<PrimaryExpr, ParserError> {
+  fn expr_op(&mut self, lhs: Option<Expr>, pcd: i32) -> Result<Expr, ParsingError> {
+    self.postfix_expr()
+  }
+
+  fn postfix_expr(&mut self) -> Result<Expr, ParsingError> {
+    match self.lhs_expr() {
+      Ok(expr) => {
+        if let Ok(tok) = self.lexer.peek() {
+          if tok.is_symbol_kind(Symbol::Inc) || tok.is_symbol_kind(Symbol::Dec) {
+            let tok = self.lexer.next().ok().unwrap();
+            let expr = UnaryExpr::new(tok.deref().clone(), expr, false).into();
+            return Ok(expr);
+          }
+        }
+        Ok(expr)
+      }
+      Err(e) => Err(e),
+    }
+  }
+
+  fn lhs_expr(&mut self) -> Result<Expr, ParsingError> {
+    self.new_expr()
+  }
+
+  fn new_expr(&mut self) -> Result<Expr, ParsingError> {
+    self.member_expr(None)
+  }
+
+  fn member_expr(&mut self, obj: Option<Expr>) -> Result<Expr, ParsingError> {
+    let mut obj = match obj {
+      Some(o) => o,
+      _ => match self.primary_expr() {
+        Ok(expr) => expr.into(),
+        Err(e) => return Err(e),
+      },
+    };
+    loop {
+      if let Ok(tok) = self.lexer.peek() {
+        if tok.is_symbol_kind(Symbol::Dot) {
+          self.lexer.advance();
+          match self.lexer.next() {
+            Ok(tok) => {
+              if !tok.is_id() {
+                return Err(ParserError::new(self.errmsg(tok.loc())).into());
+              }
+              let prop = PrimaryExpr::Identifier(IdData::new(
+                tok.loc().clone(),
+                tok.id_data().clone().value,
+              ));
+              obj = Expr::Member(Rc::new(MemberExpr {
+                object: obj,
+                property: prop.into(),
+                computed: false,
+              }));
+              continue;
+            }
+            Err(e) => return Err(e.into()),
+          }
+        } else if tok.is_symbol_kind(Symbol::BracketL) {
+          self.lexer.advance();
+          let prop = match self.expr() {
+            Ok(expr) => expr,
+            Err(e) => return Err(e.into()),
+          };
+          match self.lexer.next() {
+            Ok(tok) => {
+              if !tok.is_symbol_kind(Symbol::BracketR) {
+                return Err(ParserError::new(self.errmsg(tok.loc())).into());
+              }
+            }
+            Err(e) => return Err(e.into()),
+          }
+          obj = Expr::Member(Rc::new(MemberExpr {
+            object: obj,
+            property: prop,
+            computed: true,
+          }));
+          continue;
+        }
+      }
+      break;
+    }
+    Ok(obj)
+  }
+
+  fn array_literal(&mut self, open: &Token) -> Result<PrimaryExpr, ParsingError> {
     let mut ret = ArrayData {
       loc: open.loc().to_owned(),
       value: vec![],
@@ -118,12 +203,85 @@ impl<'a> Parser<'a> {
   }
 }
 
+#[derive(Debug)]
 pub enum Literal {
   RegExp(RegExpData),
   Null(NullData),
   String(StringData),
   Bool(BoolData),
   Numeric(NumericData),
+}
+
+impl Literal {
+  pub fn is_regexp(&self) -> bool {
+    match self {
+      Literal::RegExp(_) => true,
+      _ => false,
+    }
+  }
+
+  pub fn is_null(&self) -> bool {
+    match self {
+      Literal::Null(_) => true,
+      _ => false,
+    }
+  }
+
+  pub fn is_str(&self) -> bool {
+    match self {
+      Literal::String(_) => true,
+      _ => false,
+    }
+  }
+
+  pub fn is_bool(&self) -> bool {
+    match self {
+      Literal::Bool(_) => true,
+      _ => false,
+    }
+  }
+
+  pub fn is_num(&self) -> bool {
+    match self {
+      Literal::Numeric(_) => true,
+      _ => false,
+    }
+  }
+
+  pub fn regexp(&self) -> &RegExpData {
+    match self {
+      Literal::RegExp(d) => d,
+      _ => panic!(),
+    }
+  }
+
+  pub fn null(&self) -> &NullData {
+    match self {
+      Literal::Null(d) => d,
+      _ => panic!(),
+    }
+  }
+
+  pub fn str(&self) -> &StringData {
+    match self {
+      Literal::String(d) => d,
+      _ => panic!(),
+    }
+  }
+
+  pub fn bool(&self) -> &BoolData {
+    match self {
+      Literal::Bool(d) => d,
+      _ => panic!(),
+    }
+  }
+
+  pub fn num(&self) -> &NumericData {
+    match self {
+      Literal::Numeric(d) => d,
+      _ => panic!(),
+    }
+  }
 }
 
 impl From<RegExpData> for Literal {
@@ -156,51 +314,7 @@ impl From<NumericData> for Literal {
   }
 }
 
-impl From<Literal> for RegExpData {
-  fn from(f: Literal) -> Self {
-    match f {
-      Literal::RegExp(d) => d,
-      _ => panic!(),
-    }
-  }
-}
-
-impl From<Literal> for NullData {
-  fn from(f: Literal) -> Self {
-    match f {
-      Literal::Null(d) => d,
-      _ => panic!(),
-    }
-  }
-}
-
-impl From<Literal> for StringData {
-  fn from(f: Literal) -> Self {
-    match f {
-      Literal::String(d) => d,
-      _ => panic!(),
-    }
-  }
-}
-
-impl From<Literal> for BoolData {
-  fn from(f: Literal) -> Self {
-    match f {
-      Literal::Bool(d) => d,
-      _ => panic!(),
-    }
-  }
-}
-
-impl From<Literal> for NumericData {
-  fn from(f: Literal) -> Self {
-    match f {
-      Literal::Numeric(d) => d,
-      _ => panic!(),
-    }
-  }
-}
-
+#[derive(Debug)]
 pub enum PrimaryExpr {
   This(ThisExprData),
   Identifier(IdData),
@@ -208,6 +322,92 @@ pub enum PrimaryExpr {
   ArrayLiteral(ArrayData),
   ObjectLiteral(ObjectData),
   Parenthesized(ParenData),
+}
+
+impl PrimaryExpr {
+  pub fn is_id(&self) -> bool {
+    match self {
+      PrimaryExpr::Identifier(_) => true,
+      _ => false,
+    }
+  }
+
+  pub fn is_this(&self) -> bool {
+    match self {
+      PrimaryExpr::This(_) => true,
+      _ => false,
+    }
+  }
+
+  pub fn is_literal(&self) -> bool {
+    match self {
+      PrimaryExpr::Literal(_) => true,
+      _ => false,
+    }
+  }
+
+  pub fn is_array(&self) -> bool {
+    match self {
+      PrimaryExpr::ArrayLiteral(_) => true,
+      _ => false,
+    }
+  }
+
+  pub fn is_object(&self) -> bool {
+    match self {
+      PrimaryExpr::ObjectLiteral(_) => true,
+      _ => false,
+    }
+  }
+
+  pub fn is_paren(&self) -> bool {
+    match self {
+      PrimaryExpr::Parenthesized(_) => true,
+      _ => false,
+    }
+  }
+
+  pub fn this(&self) -> &ThisExprData {
+    match self {
+      PrimaryExpr::This(d) => d,
+      _ => panic!(),
+    }
+  }
+
+  pub fn literal(&self) -> &Literal {
+    match self {
+      PrimaryExpr::Literal(d) => d,
+      _ => panic!(),
+    }
+  }
+
+  pub fn array(&self) -> &ArrayData {
+    match self {
+      PrimaryExpr::ArrayLiteral(d) => d,
+      _ => panic!(),
+    }
+  }
+
+  pub fn object(&self) -> &ObjectData {
+    match self {
+      PrimaryExpr::ObjectLiteral(d) => d,
+      _ => panic!(),
+    }
+  }
+
+  pub fn paren(&self) -> &ParenData {
+    match self {
+      PrimaryExpr::Parenthesized(d) => d,
+      _ => panic!(),
+    }
+  }
+
+  pub fn id(&self) -> &IdData {
+    match self {
+      PrimaryExpr::Identifier(d) => d,
+      _ => panic!(),
+    }
+  }
 }
 
 impl From<ThisExprData> for PrimaryExpr {
@@ -269,70 +469,103 @@ impl From<ArrayData> for PrimaryExpr {
   }
 }
 
-impl From<PrimaryExpr> for ThisExprData {
-  fn from(f: PrimaryExpr) -> Self {
-    match f {
-      PrimaryExpr::This(d) => d,
-      _ => panic!(),
+#[derive(Debug)]
+pub struct UnaryExpr {
+  op: Token,
+  argument: Expr,
+  prefix: bool,
+}
+
+impl UnaryExpr {
+  fn new(op: Token, argument: Expr, prefix: bool) -> Self {
+    UnaryExpr {
+      op,
+      argument,
+      prefix,
     }
   }
 }
 
-impl From<PrimaryExpr> for IdData {
-  fn from(f: PrimaryExpr) -> Self {
-    match f {
-      PrimaryExpr::Identifier(d) => d,
-      _ => panic!(),
-    }
-  }
+#[derive(Debug)]
+pub struct BinaryExpr {
+  op: Token,
+  left: Expr,
+  right: Expr,
 }
 
-impl From<PrimaryExpr> for Literal {
-  fn from(f: PrimaryExpr) -> Self {
-    match f {
-      PrimaryExpr::Literal(d) => d,
-      _ => panic!(),
-    }
-  }
+#[derive(Debug)]
+pub struct MemberExpr {
+  object: Expr,
+  property: Expr,
+  computed: bool,
 }
 
-impl<'a> From<&'a PrimaryExpr> for &'a Literal {
-  fn from(f: &'a PrimaryExpr) -> Self {
-    match f {
-      PrimaryExpr::Literal(d) => d,
-      _ => panic!(),
-    }
-  }
+#[derive(Debug)]
+pub struct NewExpr {
+  callee: Expr,
+  arguments: Vec<Expr>,
 }
 
-impl<'a> From<&'a Literal> for &'a StringData {
-  fn from(f: &'a Literal) -> Self {
-    match f {
-      Literal::String(d) => d,
-      _ => panic!(),
-    }
-  }
+#[derive(Debug)]
+pub struct CallExpr {
+  callee: Expr,
+  arguments: Vec<Expr>,
 }
 
-impl From<PrimaryExpr> for ArrayData {
-  fn from(f: PrimaryExpr) -> Self {
-    match f {
-      PrimaryExpr::ArrayLiteral(d) => d,
-      _ => panic!(),
-    }
-  }
-}
-
+#[derive(Debug)]
 pub enum Expr {
   Primary(Rc<PrimaryExpr>),
   Function,
-  Member,
-  New,
-  Call,
-  Unary,
-  Binary,
+  Member(Rc<MemberExpr>),
+  New(Rc<NewExpr>),
+  Call(Rc<CallExpr>),
+  Unary(Rc<UnaryExpr>),
+  Binary(Rc<BinaryExpr>),
   Assignment,
   Conditional,
+}
+
+impl Expr {
+  fn is_unary(&self) -> bool {
+    match self {
+      Expr::Unary(_) => true,
+      _ => false,
+    }
+  }
+
+  fn is_member(&self) -> bool {
+    match self {
+      Expr::Member(_) => true,
+      _ => false,
+    }
+  }
+
+  fn primary(&self) -> &PrimaryExpr {
+    match self {
+      Expr::Primary(expr) => expr,
+      _ => panic!(),
+    }
+  }
+
+  fn member(&self) -> &MemberExpr {
+    match self {
+      Expr::Member(expr) => expr,
+      _ => panic!(),
+    }
+  }
+
+  fn unary(&self) -> &UnaryExpr {
+    match self {
+      Expr::Unary(expr) => expr,
+      _ => panic!(),
+    }
+  }
+}
+
+impl From<UnaryExpr> for Expr {
+  fn from(f: UnaryExpr) -> Self {
+    Expr::Unary(Rc::new(f))
+  }
 }
 
 impl From<PrimaryExpr> for Expr {
@@ -360,6 +593,25 @@ impl<'a> From<&'a Expr> for &'a Rc<PrimaryExpr> {
   }
 }
 
+impl From<Expr> for Rc<MemberExpr> {
+  fn from(f: Expr) -> Self {
+    match f {
+      Expr::Member(d) => d,
+      _ => panic!(),
+    }
+  }
+}
+
+impl From<Expr> for Rc<UnaryExpr> {
+  fn from(f: Expr) -> Self {
+    match f {
+      Expr::Unary(d) => d,
+      _ => panic!(),
+    }
+  }
+}
+
+#[derive(Debug)]
 pub struct ThisExprData {
   pub loc: SourceLoc,
 }
@@ -370,6 +622,7 @@ impl ThisExprData {
   }
 }
 
+#[derive(Debug)]
 pub struct IdData {
   pub loc: SourceLoc,
   pub name: String,
@@ -381,6 +634,7 @@ impl IdData {
   }
 }
 
+#[derive(Debug)]
 pub struct RegExpData {
   pub loc: SourceLoc,
   pub value: String,
@@ -392,6 +646,7 @@ impl RegExpData {
   }
 }
 
+#[derive(Debug)]
 pub struct NullData {
   pub loc: SourceLoc,
 }
@@ -402,6 +657,7 @@ impl NullData {
   }
 }
 
+#[derive(Debug)]
 pub struct StringData {
   pub loc: SourceLoc,
   pub value: String,
@@ -413,6 +669,7 @@ impl StringData {
   }
 }
 
+#[derive(Debug)]
 pub struct BoolData {
   pub loc: SourceLoc,
   pub value: bool,
@@ -424,6 +681,7 @@ impl BoolData {
   }
 }
 
+#[derive(Debug)]
 pub struct NumericData {
   pub loc: SourceLoc,
   pub value: String,
@@ -435,22 +693,26 @@ impl NumericData {
   }
 }
 
+#[derive(Debug)]
 pub struct ArrayData {
   pub loc: SourceLoc,
   pub value: Vec<Expr>,
 }
 
+#[derive(Debug)]
 pub struct ObjectProperty {
   pub loc: SourceLoc,
   pub key: Expr,
   pub value: Expr,
 }
 
+#[derive(Debug)]
 pub struct ObjectData {
   pub loc: SourceLoc,
   pub properties: Vec<ObjectProperty>,
 }
 
+#[derive(Debug)]
 pub struct ParenData {
   pub loc: SourceLoc,
   pub value: Expr,
@@ -460,6 +722,7 @@ pub struct ParenData {
 mod lexer_tests {
   use super::*;
   use crate::source::*;
+  use core::borrow::Borrow;
 
   #[test]
   fn primary_expr() {
@@ -469,42 +732,69 @@ mod lexer_tests {
     let src = Source::new(&code);
     let mut lexer = Lexer::new(src);
     let mut parser = Parser::new(&mut lexer);
-    let node = parser.primary_expr();
-    let node: ThisExprData = node.ok().unwrap().into();
-    assert_eq!(1, node.loc.start.line);
+    let node = parser.primary_expr().ok().unwrap();
+    assert!(node.is_this());
 
     let node = parser.primary_expr();
-    let node: IdData = node.ok().unwrap().into();
-    assert_eq!("a", node.name);
+    let node = node.ok().unwrap();
+    assert!(node.is_id());
 
     let node = parser.primary_expr();
-    let node: Literal = node.ok().unwrap().into();
-    let node: StringData = node.into();
-    assert_eq!("hello", node.value);
+    let node = node.ok().unwrap();
+    assert!(node.is_literal());
+    assert!(node.literal().is_str());
 
     let node = parser.primary_expr();
-    let node: Literal = node.ok().unwrap().into();
-    let node: NullData = node.into();
-    assert_eq!(1, node.loc.start.line);
+    let node = node.ok().unwrap();
+    assert!(node.is_literal());
+    assert!(node.literal().is_null());
 
     let node = parser.primary_expr();
-    let node: Literal = node.ok().unwrap().into();
-    let node: BoolData = node.into();
-    assert_eq!(false, node.value);
+    let node = node.ok().unwrap();
+    assert!(node.is_literal());
+    assert!(node.literal().is_bool());
 
     let node = parser.primary_expr();
-    let node: Literal = node.ok().unwrap().into();
-    let node: NumericData = node.into();
-    assert_eq!("0x01", node.value);
+    let node = node.ok().unwrap();
+    assert!(node.is_literal());
+    assert!(node.literal().is_num());
 
     let node = parser.primary_expr();
-    let node: ArrayData = node.ok().unwrap().into();
-    assert_eq!(4, node.value.len());
-    let node = node.value[3].borrow();
-    let node: &Rc<PrimaryExpr> = node.into();
-    let node: &PrimaryExpr = node.borrow();
-    let node: &Literal = node.into();
-    let node: &StringData = node.into();
-    assert_eq!("world", node.value);
+    let node = node.ok().unwrap();
+    assert!(node.is_array());
+    assert_eq!(4, node.array().value.len());
+    assert_eq!(
+      "world",
+      node.array().value[3].primary().literal().str().value
+    );
+  }
+
+  #[test]
+  fn member_expr() {
+    init_token_data();
+
+    let code = String::from("a.b++ a[c][d]--");
+    let src = Source::new(&code);
+    let mut lexer = Lexer::new(src);
+    let mut parser = Parser::new(&mut lexer);
+
+    let node = parser.expr();
+    assert!(!node.is_err());
+    let node = node.ok().unwrap();
+    assert!(node.is_unary());
+    let node: Rc<UnaryExpr> = node.into();
+    assert!(node.argument.is_member());
+    assert_eq!("a", node.argument.member().object.primary().id().name);
+
+    let node = parser.expr();
+    assert!(!node.is_err());
+    let node = node.ok().unwrap();
+    assert!(node.is_unary());
+    assert_eq!(false, node.unary().prefix);
+    assert_eq!(true, node.unary().op.is_symbol_kind(Symbol::Dec));
+    assert!(node.unary().argument.is_member());
+    let node = node.unary().argument.member();
+    assert!(node.object.is_member());
+    assert_eq!("c", node.object.member().property.primary().id().name);
   }
 }
