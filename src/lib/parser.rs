@@ -13,6 +13,16 @@ impl ParserError {
     ParserError { msg }
   }
 
+  pub fn at(tok: &Token) -> Self {
+    let loc = tok.loc();
+    ParserError {
+      msg: format!(
+        "Unexpected token at line: {} column: {}",
+        loc.start.line, loc.start.column
+      ),
+    }
+  }
+
   pub fn default() -> Self {
     ParserError {
       msg: "".to_string(),
@@ -46,13 +56,6 @@ impl<'a> Parser<'a> {
     Parser { lexer }
   }
 
-  fn errmsg(&self, loc: &SourceLoc) -> String {
-    format!(
-      "Unexpected token at line: {} column: {}",
-      loc.start.line, loc.start.column
-    )
-  }
-
   fn expr(&mut self) -> Result<Expr, ParsingError> {
     match self.expr_op(None, 0) {
       Ok(expr) => Ok(expr),
@@ -79,7 +82,7 @@ impl<'a> Parser<'a> {
         } else if tok.is_symbol_kind(Symbol::BracketL) {
           self.array_literal(&tok)
         } else {
-          Err(ParserError::new(self.errmsg(tok.loc())).into())
+          Err(ParserError::at(&tok).into())
         }
       }
       Err(e) => Err(e.into()),
@@ -107,11 +110,104 @@ impl<'a> Parser<'a> {
   }
 
   fn lhs_expr(&mut self) -> Result<Expr, ParsingError> {
-    self.new_expr()
+    if self.ahead_is_keyword(Keyword::New) {
+      self.new_expr()
+    } else {
+      self.call_expr(None)
+    }
+  }
+
+  fn ahead_is_keyword(&mut self, k: Keyword) -> bool {
+    match self.lexer.peek() {
+      Ok(tok) => tok.is_keyword_kind(k),
+      _ => false,
+    }
+  }
+
+  fn ahead_is_symbol(&mut self, syb: Symbol) -> bool {
+    match self.lexer.peek() {
+      Ok(tok) => tok.is_symbol_kind(syb),
+      _ => false,
+    }
+  }
+
+  fn ahead_is_symbol_or(&mut self, s1: Symbol, s2: Symbol) -> bool {
+    match self.lexer.peek() {
+      Ok(tok) => tok.is_symbol_kind(s1) || tok.is_symbol_kind(s2),
+      _ => false,
+    }
   }
 
   fn new_expr(&mut self) -> Result<Expr, ParsingError> {
-    self.member_expr(None)
+    self.lexer.advance();
+    let callee = match self.ahead_is_keyword(Keyword::New) {
+      true => self.new_expr(),
+      false => self.member_expr(None),
+    };
+    let callee = match callee {
+      Ok(expr) => expr,
+      Err(e) => return Err(e),
+    };
+    let arguments = match self.ahead_is_symbol(Symbol::ParenL) {
+      true => match self.args() {
+        Ok(args) => args,
+        Err(e) => return Err(e),
+      },
+      false => vec![],
+    };
+    let expr = NewExpr { callee, arguments };
+    Ok(expr.into())
+  }
+
+  fn args(&mut self) -> Result<Vec<Expr>, ParsingError> {
+    self.lexer.advance();
+    let mut args: Vec<Expr> = vec![];
+    loop {
+      if self.ahead_is_symbol(Symbol::ParenR) {
+        self.lexer.advance();
+        break;
+      }
+      match self.expr() {
+        Ok(expr) => args.push(expr),
+        Err(e) => return Err(e),
+      };
+      if self.ahead_is_symbol(Symbol::Comma) {
+        self.lexer.advance();
+      }
+    }
+    Ok(args)
+  }
+
+  fn call_expr(&mut self, callee: Option<Expr>) -> Result<Expr, ParsingError> {
+    let callee = match callee {
+      Some(expr) => expr,
+      _ => match self.member_expr(None) {
+        Ok(expr) => expr,
+        Err(e) => return Err(e),
+      },
+    };
+
+    if !self.ahead_is_symbol(Symbol::ParenL) {
+      return Ok(callee);
+    }
+
+    let arguments = match self.args() {
+      Ok(args) => args,
+      Err(e) => return Err(e),
+    };
+    let mut expr: Expr = CallExpr { callee, arguments }.into();
+    if self.ahead_is_symbol_or(Symbol::Dot, Symbol::BracketL) {
+      expr = match self.member_expr(Some(expr)) {
+        Ok(expr) => expr,
+        Err(e) => return Err(e),
+      }
+    } else if self.ahead_is_symbol(Symbol::ParenL) {
+      expr = match self.call_expr(Some(expr)) {
+        Ok(expr) => expr,
+        Err(e) => return Err(e),
+      }
+    }
+    Ok(expr)
   }
 
   fn member_expr(&mut self, obj: Option<Expr>) -> Result<Expr, ParsingError> {
@@ -129,7 +225,7 @@ impl<'a> Parser<'a> {
           match self.lexer.next() {
             Ok(tok) => {
               if !tok.is_id() {
-                return Err(ParserError::new(self.errmsg(tok.loc())).into());
+                return Err(ParserError::at(&tok).into());
               }
               let prop = PrimaryExpr::Identifier(IdData::new(
                 tok.loc().clone(),
@@ -153,7 +249,7 @@ impl<'a> Parser<'a> {
           match self.lexer.next() {
             Ok(tok) => {
               if !tok.is_symbol_kind(Symbol::BracketR) {
-                return Err(ParserError::new(self.errmsg(tok.loc())).into());
+                return Err(ParserError::at(&tok).into());
               }
             }
             Err(e) => return Err(e.into()),
@@ -540,6 +636,20 @@ impl Expr {
     }
   }
 
+  fn is_new(&self) -> bool {
+    match self {
+      Expr::New(_) => true,
+      _ => false,
+    }
+  }
+
+  fn is_call(&self) -> bool {
+    match self {
+      Expr::Call(_) => true,
+      _ => false,
+    }
+  }
+
   fn primary(&self) -> &PrimaryExpr {
     match self {
       Expr::Primary(expr) => expr,
@@ -560,6 +670,20 @@ impl Expr {
       _ => panic!(),
     }
   }
+
+  fn new_expr(&self) -> &NewExpr {
+    match self {
+      Expr::New(expr) => expr,
+      _ => panic!(),
+    }
+  }
+
+  fn call_expr(&self) -> &CallExpr {
+    match self {
+      Expr::Call(expr) => expr,
+      _ => panic!(),
+    }
+  }
 }
 
 impl From<UnaryExpr> for Expr {
@@ -575,39 +699,17 @@ impl From<PrimaryExpr> for Expr {
   }
 }
 
-impl From<Expr> for Rc<PrimaryExpr> {
-  fn from(f: Expr) -> Self {
-    match f {
-      Expr::Primary(d) => d,
-      _ => panic!(),
-    }
+impl From<NewExpr> for Expr {
+  fn from(f: NewExpr) -> Self {
+    let expr = Rc::new(f);
+    Expr::New(expr)
   }
 }
 
-impl<'a> From<&'a Expr> for &'a Rc<PrimaryExpr> {
-  fn from(f: &'a Expr) -> Self {
-    match f {
-      Expr::Primary(d) => d,
-      _ => panic!(),
-    }
-  }
-}
-
-impl From<Expr> for Rc<MemberExpr> {
-  fn from(f: Expr) -> Self {
-    match f {
-      Expr::Member(d) => d,
-      _ => panic!(),
-    }
-  }
-}
-
-impl From<Expr> for Rc<UnaryExpr> {
-  fn from(f: Expr) -> Self {
-    match f {
-      Expr::Unary(d) => d,
-      _ => panic!(),
-    }
+impl From<CallExpr> for Expr {
+  fn from(f: CallExpr) -> Self {
+    let expr = Rc::new(f);
+    Expr::Call(expr)
   }
 }
 
@@ -782,7 +884,7 @@ mod lexer_tests {
     assert!(!node.is_err());
     let node = node.ok().unwrap();
     assert!(node.is_unary());
-    let node: Rc<UnaryExpr> = node.into();
+    let node = node.unary();
     assert!(node.argument.is_member());
     assert_eq!("a", node.argument.member().object.primary().id().name);
 
@@ -796,5 +898,72 @@ mod lexer_tests {
     let node = node.unary().argument.member();
     assert!(node.object.is_member());
     assert_eq!("c", node.object.member().property.primary().id().name);
+  }
+
+  #[test]
+  fn new_expr() {
+    init_token_data();
+
+    let code = String::from("new new a(b)");
+    let src = Source::new(&code);
+    let mut lexer = Lexer::new(src);
+    let mut parser = Parser::new(&mut lexer);
+
+    let node = parser.expr();
+    assert!(!node.is_err());
+    let node = node.ok().unwrap();
+    assert!(node.is_new());
+    assert!(node.new_expr().callee.is_new());
+    assert_eq!(
+      "b",
+      node.new_expr().callee.new_expr().arguments[0]
+        .primary()
+        .id()
+        .name
+    );
+  }
+
+  #[test]
+  fn call_expr() {
+    init_token_data();
+
+    let code = String::from("a(b)(c)");
+    let src = Source::new(&code);
+    let mut lexer = Lexer::new(src);
+    let mut parser = Parser::new(&mut lexer);
+
+    let node = parser.expr();
+    assert!(!node.is_err());
+    let node = node.ok().unwrap();
+    let call = node.call_expr();
+    assert_eq!("c", call.arguments[0].primary().id().name);
+
+    let call = call.callee.call_expr();
+    assert_eq!("a", call.callee.primary().id().name);
+  }
+
+  #[test]
+  fn call_expr_mix() {
+    init_token_data();
+
+    let code = String::from("a()()[b].c");
+    let src = Source::new(&code);
+    let mut lexer = Lexer::new(src);
+    let mut parser = Parser::new(&mut lexer);
+
+    let node = parser.expr();
+    assert!(!node.is_err());
+    let node = node.ok().unwrap();
+    let obj = node.member();
+    let prop = obj.property.primary().id();
+    assert_eq!("c", prop.name);
+
+    let obj = obj.object.member();
+    assert_eq!("b", obj.property.primary().id().name);
+    let call = obj.object.call_expr();
+    assert!(call.callee.is_call());
+
+    let call = call.callee.call_expr();
+    assert_eq!("a", call.callee.primary().id().name);
   }
 }
