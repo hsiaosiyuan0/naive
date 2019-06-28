@@ -14,36 +14,45 @@ impl<'a> Parser<'a> {
   }
 
   fn expr(&mut self) -> Result<Expr, ParsingError> {
-    match self.expr_op(None, 0, false) {
-      Ok(expr) => Ok(expr),
-      Err(e) => Err(e),
-    }
+    self.cond_expr()
   }
 
-  fn primary_expr(&mut self) -> Result<PrimaryExpr, ParsingError> {
-    match self.lexer.next() {
-      Ok(tok) => {
-        let loc = tok.loc().to_owned();
-        if tok.is_keyword_kind(Keyword::This) {
-          Ok(ThisExprData::new(loc).into())
-        } else if tok.is_id() {
-          Ok(IdData::new(loc, tok.id_data().value.clone()).into())
-        } else if tok.is_str() {
-          Ok(StringData::new(loc, tok.str_data().value.clone()).into())
-        } else if tok.is_null() {
-          Ok(NullData::new(loc).into())
-        } else if tok.is_bool() {
-          Ok(BoolData::new(loc, tok.bool_data().kind == BooleanLiteral::True).into())
-        } else if tok.is_num() {
-          Ok(NumericData::new(loc, tok.num_data().value.clone()).into())
-        } else if tok.is_symbol_kind(Symbol::BracketL) {
-          self.array_literal(&tok)
-        } else {
-          Err(ParserError::at(&tok).into())
-        }
-      }
-      Err(e) => Err(e.into()),
+  fn cond_expr(&mut self) -> Result<Expr, ParsingError> {
+    let test = match self.expr_op(None, 0, false) {
+      Ok(expr) => expr,
+      Err(e) => return Err(e),
+    };
+
+    let tok = self.lexer.peek();
+    if tok.is_err() {
+      return Ok(test);
     }
+    let tok = tok.ok().unwrap();
+    if !tok.is_symbol_kind(Symbol::Conditional) {
+      return Ok(test);
+    }
+    self.lexer.advance();
+
+    let cons = match self.expr_op(None, 0, false) {
+      Ok(expr) => expr,
+      Err(e) => return Err(e),
+    };
+
+    match self.lexer.next() {
+      Ok(tok) => match tok.is_symbol_kind(Symbol::Colon) {
+        false => return Err(ParserError::at(&tok).into()),
+        true => (),
+      },
+      Err(e) => return Err(e.into()),
+    }
+
+    let alt = match self.expr_op(None, 0, false) {
+      Ok(expr) => expr,
+      Err(e) => return Err(e),
+    };
+
+    let cond = CondExpr { test, cons, alt };
+    Ok(cond.into())
   }
 
   fn expr_op(
@@ -64,7 +73,7 @@ impl<'a> Parser<'a> {
         Ok(tok) => tok,
         Err(_) => break,
       };
-      let mut pcd;
+      let pcd;
       if ahead.is_symbol_bin() {
         pcd = ahead.symbol_pcd();
       } else if ahead.is_keyword_bin(not_in) {
@@ -302,6 +311,32 @@ impl<'a> Parser<'a> {
       break;
     }
     Ok(obj)
+  }
+
+  fn primary_expr(&mut self) -> Result<PrimaryExpr, ParsingError> {
+    match self.lexer.next() {
+      Ok(tok) => {
+        let loc = tok.loc().to_owned();
+        if tok.is_keyword_kind(Keyword::This) {
+          Ok(ThisExprData::new(loc).into())
+        } else if tok.is_id() {
+          Ok(IdData::new(loc, tok.id_data().value.clone()).into())
+        } else if tok.is_str() {
+          Ok(StringData::new(loc, tok.str_data().value.clone()).into())
+        } else if tok.is_null() {
+          Ok(NullData::new(loc).into())
+        } else if tok.is_bool() {
+          Ok(BoolData::new(loc, tok.bool_data().kind == BooleanLiteral::True).into())
+        } else if tok.is_num() {
+          Ok(NumericData::new(loc, tok.num_data().value.clone()).into())
+        } else if tok.is_symbol_kind(Symbol::BracketL) {
+          self.array_literal(&tok)
+        } else {
+          Err(ParserError::at(&tok).into())
+        }
+      }
+      Err(e) => Err(e.into()),
+    }
   }
 
   fn array_literal(&mut self, open: &Token) -> Result<PrimaryExpr, ParsingError> {
@@ -560,8 +595,8 @@ mod lexer_tests {
   fn expr_op() {
     init_token_data();
 
-    let mut code = String::from("a + b * c");
-    let mut src = Source::new(&code);
+    let code = String::from("a + b * c");
+    let src = Source::new(&code);
     let mut lexer = Lexer::new(src);
     let mut parser = Parser::new(&mut lexer);
 
@@ -571,8 +606,8 @@ mod lexer_tests {
     assert!(right.op.is_symbol_kind(Symbol::Mul));
     assert_eq!("b", right.left.primary().id().name);
 
-    let mut code = String::from("a + b++ * c");
-    let mut src = Source::new(&code);
+    let code = String::from("a + b++ * c");
+    let src = Source::new(&code);
     let mut lexer = Lexer::new(src);
     let mut parser = Parser::new(&mut lexer);
 
@@ -583,8 +618,8 @@ mod lexer_tests {
     let left = right.left.unary();
     assert_eq!("b", left.argument.primary().id().name);
 
-    let mut code = String::from("a + b++ * ++c");
-    let mut src = Source::new(&code);
+    let code = String::from("a + b++ * ++c");
+    let src = Source::new(&code);
     let mut lexer = Lexer::new(src);
     let mut parser = Parser::new(&mut lexer);
 
@@ -597,8 +632,8 @@ mod lexer_tests {
     let right = right.right.unary();
     assert_eq!("c", right.argument.primary().id().name);
 
-    let mut code = String::from("a in b + c");
-    let mut src = Source::new(&code);
+    let code = String::from("a in b + c");
+    let src = Source::new(&code);
     let mut lexer = Lexer::new(src);
     let mut parser = Parser::new(&mut lexer);
 
@@ -608,5 +643,21 @@ mod lexer_tests {
     let right = node.right.bin_expr();
     assert!(right.op.is_symbol_kind(Symbol::Add));
     assert_eq!("b", right.left.primary().id().name);
+  }
+
+  #[test]
+  fn cond_expr() {
+    init_token_data();
+
+    let code = String::from("a + b ? c * d : f / e");
+    let src = Source::new(&code);
+    let mut lexer = Lexer::new(src);
+    let mut parser = Parser::new(&mut lexer);
+
+    let node = parser.expr().ok().unwrap();
+    assert!(node.is_cond());
+    let node = node.cond_expr();
+    let alt = node.alt.bin_expr();
+    assert_eq!("f", alt.left.primary().id().name);
   }
 }

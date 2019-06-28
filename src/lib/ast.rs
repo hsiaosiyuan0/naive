@@ -311,6 +311,13 @@ pub struct CallExpr {
 }
 
 #[derive(Debug)]
+pub struct CondExpr {
+  pub test: Expr,
+  pub cons: Expr,
+  pub alt: Expr,
+}
+
+#[derive(Debug)]
 pub enum Expr {
   Primary(Rc<PrimaryExpr>),
   Function,
@@ -320,7 +327,7 @@ pub enum Expr {
   Unary(Rc<UnaryExpr>),
   Binary(Rc<BinaryExpr>),
   Assignment,
-  Conditional,
+  Conditional(Rc<CondExpr>),
 }
 
 impl Expr {
@@ -355,6 +362,13 @@ impl Expr {
   pub fn is_bin(&self) -> bool {
     match self {
       Expr::Binary(_) => true,
+      _ => false,
+    }
+  }
+
+  pub fn is_cond(&self) -> bool {
+    match self {
+      Expr::Conditional(_) => true,
       _ => false,
     }
   }
@@ -400,6 +414,13 @@ impl Expr {
       _ => panic!(),
     }
   }
+
+  pub fn cond_expr(&self) -> &CondExpr {
+    match self {
+      Expr::Conditional(expr) => expr,
+      _ => panic!(),
+    }
+  }
 }
 
 impl From<UnaryExpr> for Expr {
@@ -433,6 +454,13 @@ impl From<BinaryExpr> for Expr {
   fn from(f: BinaryExpr) -> Self {
     let expr = Rc::new(f);
     Expr::Binary(expr)
+  }
+}
+
+impl From<CondExpr> for Expr {
+  fn from(f: CondExpr) -> Self {
+    let expr = Rc::new(f);
+    Expr::Conditional(expr)
   }
 }
 
