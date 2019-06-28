@@ -205,6 +205,7 @@ pub enum Symbol {
   Dot,
   Semi,
   Comma,
+  BinOpStart,
   LT,
   GT,
   LE,
@@ -230,6 +231,7 @@ pub enum Symbol {
   BitNot,
   And,
   Or,
+  BinOpEnd,
   Conditional,
   Colon,
   Assign,
@@ -321,6 +323,16 @@ pub fn is_symbol(s: &str) -> bool {
 }
 pub fn symbol_to_name(v: &Symbol) -> &'static str {
   unsafe { SYMBOLS_KEY_NAME.as_ref().unwrap().get(v).unwrap() }
+}
+pub fn symbol_pcd(v: &Symbol) -> i32 {
+  unsafe {
+    SYMBOLS_KEY_PRECEDENCE
+      .as_ref()
+      .unwrap()
+      .get(v)
+      .unwrap()
+      .to_owned()
+  }
 }
 pub fn name_to_symbol(s: &str) -> Symbol {
   unsafe {
@@ -519,6 +531,25 @@ impl Token {
   pub fn is_symbol(&self) -> bool {
     match self {
       Token::Symbol(_) => true,
+      _ => false,
+    }
+  }
+
+  pub fn symbol_pcd(&self) -> i32 {
+    match self {
+      Token::Symbol(s) => symbol_pcd(&s.kind),
+      _ => panic!(),
+    }
+  }
+
+  pub fn is_symbol_bin(&self) -> bool {
+    match self {
+      Token::Symbol(s) => {
+        let s = s.kind as i32;
+        let start = Symbol::BinOpStart as i32;
+        let end = Symbol::BinOpEnd as i32;
+        s > start && s < end
+      }
       _ => false,
     }
   }
