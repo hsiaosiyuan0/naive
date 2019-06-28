@@ -526,7 +526,7 @@ mod lexer_tests {
   fn member_expr() {
     init_token_data();
 
-    let code = String::from("a.b++ a[c][d]--");
+    let code = String::from("a.b++ a[c+1][d]--");
     let src = Source::new(&code);
     let mut lexer = Lexer::new(src);
     let mut parser = Parser::new(&mut lexer);
@@ -548,7 +548,10 @@ mod lexer_tests {
     assert!(node.unary().argument.is_member());
     let node = node.unary().argument.member();
     assert!(node.object.is_member());
-    assert_eq!("c", node.object.member().property.primary().id().name);
+
+    let prop = node.object.member().property.bin_expr();
+    assert_eq!("c", prop.left.primary().id().name);
+    assert_eq!("1", prop.right.primary().literal().num().value);
   }
 
   #[test]
