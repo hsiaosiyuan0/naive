@@ -318,6 +318,13 @@ pub struct CondExpr {
 }
 
 #[derive(Debug)]
+pub struct AssignExpr {
+  pub op: Token,
+  pub left: Expr,
+  pub right: Expr,
+}
+
+#[derive(Debug)]
 pub enum Expr {
   Primary(Rc<PrimaryExpr>),
   Function,
@@ -326,7 +333,7 @@ pub enum Expr {
   Call(Rc<CallExpr>),
   Unary(Rc<UnaryExpr>),
   Binary(Rc<BinaryExpr>),
-  Assignment,
+  Assignment(Rc<AssignExpr>),
   Conditional(Rc<CondExpr>),
 }
 
@@ -369,6 +376,13 @@ impl Expr {
   pub fn is_cond(&self) -> bool {
     match self {
       Expr::Conditional(_) => true,
+      _ => false,
+    }
+  }
+
+  pub fn is_assign(&self) -> bool {
+    match self {
+      Expr::Assignment(_) => true,
       _ => false,
     }
   }
@@ -421,6 +435,13 @@ impl Expr {
       _ => panic!(),
     }
   }
+
+  pub fn assign_expr(&self) -> &AssignExpr {
+    match self {
+      Expr::Assignment(expr) => expr,
+      _ => panic!(),
+    }
+  }
 }
 
 impl From<UnaryExpr> for Expr {
@@ -461,6 +482,13 @@ impl From<CondExpr> for Expr {
   fn from(f: CondExpr) -> Self {
     let expr = Rc::new(f);
     Expr::Conditional(expr)
+  }
+}
+
+impl From<AssignExpr> for Expr {
+  fn from(f: AssignExpr) -> Self {
+    let expr = Rc::new(f);
+    Expr::Assignment(expr)
   }
 }
 

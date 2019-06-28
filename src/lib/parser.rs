@@ -14,7 +14,36 @@ impl<'a> Parser<'a> {
   }
 
   fn expr(&mut self) -> Result<Expr, ParsingError> {
-    self.cond_expr()
+    self.assign_expr()
+  }
+
+  fn assign_expr(&mut self) -> Result<Expr, ParsingError> {
+    let lhs = match self.cond_expr() {
+      Ok(expr) => expr,
+      Err(e) => return Err(e),
+    };
+
+    let op = self.lexer.peek();
+    if op.is_err() {
+      return Ok(lhs);
+    }
+    let op = op.ok().unwrap().deref().clone();
+    if !op.is_symbol_assign() {
+      return Ok(lhs);
+    }
+    self.lexer.advance();
+
+    let rhs = match self.cond_expr() {
+      Ok(expr) => expr,
+      Err(e) => return Err(e),
+    };
+
+    let assign = AssignExpr {
+      op,
+      left: lhs,
+      right: rhs,
+    };
+    Ok(assign.into())
   }
 
   fn cond_expr(&mut self) -> Result<Expr, ParsingError> {
@@ -659,5 +688,25 @@ mod lexer_tests {
     let node = node.cond_expr();
     let alt = node.alt.bin_expr();
     assert_eq!("f", alt.left.primary().id().name);
+  }
+
+  #[test]
+  fn assign_expr() {
+    init_token_data();
+
+    let code = String::from("v = a + b ? c in d : f / e");
+    let src = Source::new(&code);
+    let mut lexer = Lexer::new(src);
+    let mut parser = Parser::new(&mut lexer);
+
+    let node = parser.expr().ok().unwrap();
+    assert!(node.is_assign());
+    let assign = node.assign_expr();
+    let lhs = assign.left.primary();
+    assert_eq!("v", lhs.id().name);
+
+    let rhs = assign.right.cond_expr();
+    let test = rhs.cons.bin_expr();
+    assert!(test.op.is_keyword_kind(Keyword::In));
   }
 }

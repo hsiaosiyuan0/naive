@@ -234,6 +234,7 @@ pub enum Symbol {
   BinOpEnd,
   Conditional,
   Colon,
+  AssignStart,
   Assign,
   AssignAdd,
   AssignSub,
@@ -246,6 +247,7 @@ pub enum Symbol {
   AssignBitAnd,
   AssignBitOr,
   AssignBitXor,
+  AssignEnd,
 }
 
 #[derive(Debug, Clone)]
@@ -565,6 +567,18 @@ impl Token {
         let s = s.kind as i32;
         let start = Symbol::BinOpStart as i32;
         let end = Symbol::BinOpEnd as i32;
+        s > start && s < end
+      }
+      _ => false,
+    }
+  }
+
+  pub fn is_symbol_assign(&self) -> bool {
+    match self {
+      Token::Symbol(s) => {
+        let s = s.kind as i32;
+        let start = Symbol::AssignStart as i32;
+        let end = Symbol::AssignEnd as i32;
         s > start && s < end
       }
       _ => false,
