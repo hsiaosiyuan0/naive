@@ -90,7 +90,7 @@ impl<'a> Parser<'a> {
   }
 
   fn expr_op(&mut self, lhs: Option<Expr>, pcd: i32) -> Result<Expr, ParsingError> {
-    self.postfix_expr()
+    self.unary_expr()
   }
 
   fn postfix_expr(&mut self) -> Result<Expr, ParsingError> {
@@ -106,6 +106,37 @@ impl<'a> Parser<'a> {
         Ok(expr)
       }
       Err(e) => Err(e),
+    }
+  }
+
+  fn unary_expr(&mut self) -> Result<Expr, ParsingError> {
+    let tok = match self.lexer.peek() {
+      Ok(tok) => tok,
+      Err(e) => return Err(e.into()),
+    };
+    let ks = vec![Keyword::Delete, Keyword::Void, Keyword::Typeof];
+    let ss = vec![
+      Symbol::Inc,
+      Symbol::Dec,
+      Symbol::Add,
+      Symbol::Sub,
+      Symbol::BitNot,
+      Symbol::Not,
+    ];
+    if tok.is_keyword_kind_in(&ks) || tok.is_symbol_kind_in(&ss) {
+      let op = self.lexer.next().ok().unwrap().deref().clone();
+      let argument = match self.unary_expr() {
+        Ok(expr) => expr,
+        Err(e) => return Err(e),
+      };
+      let expr = UnaryExpr {
+        op,
+        argument,
+        prefix: true,
+      };
+      Ok(expr.into())
+    } else {
+      self.postfix_expr()
     }
   }
 
@@ -965,5 +996,36 @@ mod lexer_tests {
 
     let call = call.callee.call_expr();
     assert_eq!("a", call.callee.primary().id().name);
+  }
+
+  #[test]
+  fn unary_expr() {
+    init_token_data();
+
+    let code = String::from("++--a(b)(c)[d][e]");
+    let src = Source::new(&code);
+    let mut lexer = Lexer::new(src);
+    let mut parser = Parser::new(&mut lexer);
+
+    let node = parser.expr().ok().unwrap();
+    assert!(node.is_unary());
+    let node = node.unary();
+    assert!(node.op.is_symbol_kind(Symbol::Inc));
+
+    let node = node.argument.unary();
+    assert!(node.argument.is_member());
+
+    let node = node.argument.member();
+    assert_eq!("e", node.property.primary().id().name);
+
+    let node = node.object.member();
+    assert_eq!("d", node.property.primary().id().name);
+
+    let node = node.object.call_expr();
+    assert_eq!("c", node.arguments[0].primary().id().name);
+
+    let node = node.callee.call_expr();
+    assert_eq!("b", node.arguments[0].primary().id().name);
+    assert_eq!("a", node.callee.primary().id().name);
   }
 }

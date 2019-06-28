@@ -502,6 +502,13 @@ impl Token {
     }
   }
 
+  pub fn is_keyword_kind_in(&self, ks: &Vec<Keyword>) -> bool {
+    match self {
+      Token::Keyword(d) => ks.contains(&d.kind),
+      _ => false,
+    }
+  }
+
   pub fn keyword_data(&self) -> &KeywordData {
     match self {
       Token::Keyword(data) => data,
@@ -519,6 +526,13 @@ impl Token {
   pub fn is_symbol_kind(&self, k: Symbol) -> bool {
     match self {
       Token::Symbol(s) => s.kind == k,
+      _ => false,
+    }
+  }
+
+  pub fn is_symbol_kind_in(&self, ks: &Vec<Symbol>) -> bool {
+    match self {
+      Token::Symbol(d) => ks.contains(&d.kind),
       _ => false,
     }
   }

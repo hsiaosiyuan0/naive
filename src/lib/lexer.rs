@@ -699,6 +699,7 @@ impl<'a> Lexer<'a> {
           } else if self.src.test_ahead('=') {
             s.push(self.src.read().unwrap());
           }
+          break;
         }
         '!' => {
           // ! != !==
@@ -709,6 +710,7 @@ impl<'a> Lexer<'a> {
           } else if self.src.test_ahead('=') {
             s.push(self.src.read().unwrap());
           }
+          break;
         }
         '+' => {
           // + ++ +=
@@ -716,6 +718,7 @@ impl<'a> Lexer<'a> {
           if self.src.test_ahead_or('+', '=') {
             s.push(self.src.read().unwrap());
           }
+          break;
         }
         '-' => {
           // - -- -=
@@ -723,6 +726,7 @@ impl<'a> Lexer<'a> {
           if self.src.test_ahead_or('-', '=') {
             s.push(self.src.read().unwrap());
           }
+          break;
         }
         '&' => {
           // & && &=
@@ -730,6 +734,7 @@ impl<'a> Lexer<'a> {
           if self.src.test_ahead_or('&', '=') {
             s.push(self.src.read().unwrap());
           }
+          break;
         }
         '|' => {
           // | || |=
@@ -737,6 +742,7 @@ impl<'a> Lexer<'a> {
           if self.src.test_ahead_or('|', '=') {
             s.push(self.src.read().unwrap());
           }
+          break;
         }
         '*' | '/' | '%' | '^' | '~' => {
           // pattern pattern=
@@ -744,6 +750,7 @@ impl<'a> Lexer<'a> {
           if self.src.test_ahead('=') {
             s.push(self.src.read().unwrap());
           }
+          break;
         }
         _ => return Err(LexError::new(self.errmsg())),
       }
