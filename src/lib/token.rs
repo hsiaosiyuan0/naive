@@ -521,6 +521,23 @@ impl Token {
     }
   }
 
+  pub fn is_keyword_bin(&self, not_in: bool) -> bool {
+    match self {
+      Token::Keyword(d) => !not_in && d.kind == Keyword::In,
+      _ => false,
+    }
+  }
+
+  pub fn keyword_pcd(&self) -> i32 {
+    match self {
+      Token::Keyword(d) => match d.kind {
+        Keyword::In => 11,
+        _ => -1,
+      },
+      _ => -1,
+    }
+  }
+
   pub fn keyword_data(&self) -> &KeywordData {
     match self {
       Token::Keyword(data) => data,

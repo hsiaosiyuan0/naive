@@ -14,7 +14,7 @@ impl<'a> Parser<'a> {
   }
 
   fn expr(&mut self) -> Result<Expr, ParsingError> {
-    match self.expr_op(None, 0) {
+    match self.expr_op(None, 0, false) {
       Ok(expr) => Ok(expr),
       Err(e) => Err(e),
     }
@@ -46,7 +46,12 @@ impl<'a> Parser<'a> {
     }
   }
 
-  fn expr_op(&mut self, lhs: Option<Expr>, min_pcd: i32) -> Result<Expr, ParsingError> {
+  fn expr_op(
+    &mut self,
+    lhs: Option<Expr>,
+    min_pcd: i32,
+    not_in: bool,
+  ) -> Result<Expr, ParsingError> {
     let mut lhs = match lhs {
       Some(expr) => expr,
       _ => match self.unary_expr() {
@@ -59,10 +64,14 @@ impl<'a> Parser<'a> {
         Ok(tok) => tok,
         Err(_) => break,
       };
-      if !ahead.is_symbol_bin() {
+      let mut pcd;
+      if ahead.is_symbol_bin() {
+        pcd = ahead.symbol_pcd();
+      } else if ahead.is_keyword_bin(not_in) {
+        pcd = ahead.keyword_pcd()
+      } else {
         break;
       }
-      let pcd = ahead.symbol_pcd();
       if pcd < min_pcd {
         break;
       }
@@ -74,7 +83,7 @@ impl<'a> Parser<'a> {
       };
       if let Ok(next_ok) = self.lexer.peek() {
         if next_ok.is_symbol_bin() {
-          rhs = match self.expr_op(Some(rhs), pcd) {
+          rhs = match self.expr_op(Some(rhs), pcd, not_in) {
             Ok(expr) => expr,
             Err(e) => return Err(e),
           };
@@ -587,5 +596,17 @@ mod lexer_tests {
     assert_eq!("b", left.argument.primary().id().name);
     let right = right.right.unary();
     assert_eq!("c", right.argument.primary().id().name);
+
+    let mut code = String::from("a in b + c");
+    let mut src = Source::new(&code);
+    let mut lexer = Lexer::new(src);
+    let mut parser = Parser::new(&mut lexer);
+
+    let node = parser.expr().ok().unwrap();
+    let node = node.bin_expr();
+    assert!(node.op.is_keyword_kind(Keyword::In));
+    let right = node.right.bin_expr();
+    assert!(right.op.is_symbol_kind(Symbol::Add));
+    assert_eq!("b", right.left.primary().id().name);
   }
 }
