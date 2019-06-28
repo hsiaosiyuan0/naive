@@ -14,7 +14,36 @@ impl<'a> Parser<'a> {
   }
 
   fn expr(&mut self) -> Result<Expr, ParsingError> {
-    self.assign_expr()
+    let first = match self.assign_expr() {
+      Ok(expr) => expr,
+      Err(e) => return Err(e),
+    };
+
+    let tok = self.lexer.peek();
+    if tok.is_err() {
+      return Ok(first);
+    }
+    let tok = tok.ok().unwrap();
+    if !tok.is_symbol_kind(Symbol::Comma) {
+      return Ok(first);
+    }
+    self.lexer.advance();
+
+    let mut seq: Vec<Expr> = vec![first];
+    loop {
+      let expr = match self.assign_expr() {
+        Ok(expr) => expr,
+        Err(e) => return Err(e),
+      };
+      seq.push(expr);
+      if self.ahead_is_symbol(Symbol::Comma) {
+        self.lexer.advance();
+      } else {
+        break;
+      }
+    }
+    let seq = SeqExpr { expressions: seq };
+    Ok(seq.into())
   }
 
   fn assign_expr(&mut self) -> Result<Expr, ParsingError> {
@@ -387,7 +416,7 @@ impl<'a> Parser<'a> {
               _ => (),
             }
           } else {
-            match self.expr() {
+            match self.assign_expr() {
               Ok(expr) => ret.value.push(expr),
               Err(e) => return Err(e.into()),
             };
@@ -708,5 +737,22 @@ mod lexer_tests {
     let rhs = assign.right.cond_expr();
     let test = rhs.cons.bin_expr();
     assert!(test.op.is_keyword_kind(Keyword::In));
+  }
+
+  #[test]
+  fn seq_expr() {
+    init_token_data();
+
+    let code = String::from("1 + 2, 3 + d, [e, f]");
+    let src = Source::new(&code);
+    let mut lexer = Lexer::new(src);
+    let mut parser = Parser::new(&mut lexer);
+
+    let node = parser.expr().ok().unwrap();
+    assert!(node.is_seq());
+    let seq = node.seq_expr();
+    assert_eq!(3, seq.expressions.len());
+    let arr = seq.expressions[2].primary().array();
+    assert_eq!(2, arr.value.len());
   }
 }

@@ -325,6 +325,11 @@ pub struct AssignExpr {
 }
 
 #[derive(Debug)]
+pub struct SeqExpr {
+  pub expressions: Vec<Expr>,
+}
+
+#[derive(Debug)]
 pub enum Expr {
   Primary(Rc<PrimaryExpr>),
   Function,
@@ -335,6 +340,7 @@ pub enum Expr {
   Binary(Rc<BinaryExpr>),
   Assignment(Rc<AssignExpr>),
   Conditional(Rc<CondExpr>),
+  Sequence(Rc<SeqExpr>),
 }
 
 impl Expr {
@@ -383,6 +389,13 @@ impl Expr {
   pub fn is_assign(&self) -> bool {
     match self {
       Expr::Assignment(_) => true,
+      _ => false,
+    }
+  }
+
+  pub fn is_seq(&self) -> bool {
+    match self {
+      Expr::Sequence(_) => true,
       _ => false,
     }
   }
@@ -442,6 +455,13 @@ impl Expr {
       _ => panic!(),
     }
   }
+
+  pub fn seq_expr(&self) -> &SeqExpr {
+    match self {
+      Expr::Sequence(expr) => expr,
+      _ => panic!(),
+    }
+  }
 }
 
 impl From<UnaryExpr> for Expr {
@@ -489,6 +509,13 @@ impl From<AssignExpr> for Expr {
   fn from(f: AssignExpr) -> Self {
     let expr = Rc::new(f);
     Expr::Assignment(expr)
+  }
+}
+
+impl From<SeqExpr> for Expr {
+  fn from(f: SeqExpr) -> Self {
+    let expr = Rc::new(f);
+    Expr::Sequence(expr)
   }
 }
 
