@@ -671,24 +671,24 @@ pub struct IfStmt {
 }
 
 #[derive(Debug)]
+pub enum ForFirst {
+  VarDec(Rc<VarDec>),
+  Expr(Expr),
+}
+
+#[derive(Debug)]
 pub struct ForStmt {
   pub loc: SourceLoc,
-  pub init: Option<VarDec>,
+  pub init: Option<ForFirst>,
   pub test: Option<Expr>,
   pub update: Option<Expr>,
   pub body: Stmt,
 }
 
 #[derive(Debug)]
-pub enum ForInLeft {
-  VarDec(VarDecor),
-  LVar(Expr),
-}
-
-#[derive(Debug)]
 pub struct ForInStmt {
   pub loc: SourceLoc,
-  pub left: ForInLeft,
+  pub left: ForFirst,
   pub right: Expr,
   pub body: Stmt,
 }
@@ -731,6 +731,11 @@ pub struct WithStmt {
 }
 
 #[derive(Debug)]
+pub struct SwitchStmt {
+  pub loc: SourceLoc,
+}
+
+#[derive(Debug)]
 pub struct ThrowStmt {
   pub loc: SourceLoc,
   pub argument: Option<Expr>,
@@ -762,7 +767,7 @@ pub enum Stmt {
   Empty(Rc<EmptyStmt>),
   Expr(Rc<ExprStmt>),
   If(Rc<IfStmt>),
-  For(Rc<ForInStmt>),
+  For(Rc<ForStmt>),
   ForIn(Rc<ForInStmt>),
   DoWhile(Rc<DoWhileStmt>),
   While(Rc<WhileStmt>),
@@ -770,6 +775,7 @@ pub enum Stmt {
   Break(Rc<BreakStmt>),
   Return(Rc<ReturnStmt>),
   With(Rc<WithStmt>),
+  Switch(Rc<SwitchStmt>),
   Throw(Rc<ThrowStmt>),
   Try(Rc<TryStmt>),
   Debugger(Rc<DebugStmt>),
@@ -803,6 +809,20 @@ impl From<IfStmt> for Stmt {
   }
 }
 
+impl From<ForInStmt> for Stmt {
+  fn from(f: ForInStmt) -> Self {
+    let expr = Rc::new(f);
+    Stmt::ForIn(expr)
+  }
+}
+
+impl From<ForStmt> for Stmt {
+  fn from(f: ForStmt) -> Self {
+    let expr = Rc::new(f);
+    Stmt::For(expr)
+  }
+}
+
 impl Stmt {
   pub fn is_block(&self) -> bool {
     match self {
@@ -832,6 +852,20 @@ impl Stmt {
     }
   }
 
+  pub fn is_for(&self) -> bool {
+    match self {
+      Stmt::For(_) => true,
+      _ => false,
+    }
+  }
+
+  pub fn is_for_in(&self) -> bool {
+    match self {
+      Stmt::ForIn(_) => true,
+      _ => false,
+    }
+  }
+
   pub fn block(&self) -> &BlockStmt {
     match self {
       Stmt::Block(s) => s,
@@ -856,6 +890,20 @@ impl Stmt {
   pub fn if_stmt(&self) -> &IfStmt {
     match self {
       Stmt::If(s) => s,
+      _ => panic!(),
+    }
+  }
+
+  pub fn for_stmt(&self) -> &ForStmt {
+    match self {
+      Stmt::For(s) => s,
+      _ => panic!(),
+    }
+  }
+
+  pub fn for_in(&self) -> &ForInStmt {
+    match self {
+      Stmt::ForIn(s) => s,
       _ => panic!(),
     }
   }

@@ -17,11 +17,141 @@ impl<'a> Parser<'a> {
     if self.ahead_is_symbol(Symbol::BraceL) {
       self.block_stmt()
     } else if self.ahead_is_keyword(Keyword::Var) {
-      self.var_dec_stmt(false)
+      self.var_dec_stmt(false, false)
     } else if self.ahead_is_keyword(Keyword::If) {
       self.if_stmt()
+    } else if self.ahead_is_keyword(Keyword::For) {
+      self.for_stmt()
     } else {
       self.expr_stmt()
+    }
+  }
+
+  fn for_stmt(&mut self) -> Result<Stmt, ParsingError> {
+    let mut loc = self.loc();
+    self.lexer.advance();
+
+    if !self.ahead_is_symbol(Symbol::ParenL) {
+      return Err(ParserError::at(&self.loc()).into());
+    }
+    self.lexer.advance();
+
+    let mut first = None;
+    let mut left = None;
+    if self.ahead_is_keyword(Keyword::Var) {
+      first = match self.for_var() {
+        Ok(expr) => Some(expr),
+        Err(e) => return Err(e),
+      };
+    } else {
+      left = match self.expr(true) {
+        Ok(expr) => Some(expr),
+        Err(e) => return Err(e),
+      };
+    }
+
+    let is_for_in = self.ahead_is_keyword(Keyword::In);
+
+    let for_in_left;
+    if first.is_some() {
+      let first = first.unwrap();
+      if is_for_in && first.decs.len() > 1 {
+        return Err(ParserError::at(&first.loc).into());
+      }
+      for_in_left = ForFirst::VarDec(first);
+    } else if left.is_some() {
+      for_in_left = ForFirst::Expr(left.unwrap());
+    } else {
+      return Err(ParserError::at(&self.loc()).into());
+    }
+
+    if is_for_in {
+      self.lexer.advance();
+
+      let right = match self.expr(false) {
+        Ok(expr) => expr,
+        Err(e) => return Err(e),
+      };
+
+      if !self.ahead_is_symbol(Symbol::ParenR) {
+        return Err(ParserError::at(&self.loc()).into());
+      }
+      self.lexer.advance();
+
+      let body = match self.stmt() {
+        Ok(stmt) => stmt,
+        Err(e) => return Err(e),
+      };
+
+      loc.end = self.pos();
+      return Ok(
+        ForInStmt {
+          loc,
+          left: for_in_left,
+          right,
+          body,
+        }
+        .into(),
+      );
+    }
+
+    if !self.ahead_is_symbol(Symbol::Semi) {
+      return Err(ParserError::at(&self.loc()).into());
+    }
+    self.lexer.advance();
+
+    let test = match self.ahead_is_symbol(Symbol::Semi) {
+      true => {
+        self.lexer.advance();
+        None
+      }
+      false => match self.expr(false) {
+        Ok(expr) => Some(expr),
+        Err(e) => return Err(e),
+      },
+    };
+
+    let update = match self.ahead_is_symbol(Symbol::Semi) {
+      true => {
+        self.lexer.advance();
+        None
+      }
+      false => match self.expr(false) {
+        Ok(expr) => Some(expr),
+        Err(e) => return Err(e),
+      },
+    };
+
+    if !self.ahead_is_symbol(Symbol::ParenR) {
+      return Err(ParserError::at(&self.loc()).into());
+    }
+    self.lexer.advance();
+
+    let body = match self.stmt() {
+      Ok(stmt) => stmt,
+      Err(e) => return Err(e),
+    };
+
+    loc.end = self.pos();
+    Ok(
+      ForStmt {
+        loc,
+        init: Some(for_in_left),
+        test,
+        update,
+        body,
+      }
+      .into(),
+    )
+  }
+
+  fn for_var(&mut self) -> Result<Rc<VarDec>, ParsingError> {
+    match self.var_dec_stmt(true, true) {
+      Ok(stmt) => match stmt {
+        Stmt::VarDec(stmt) => Ok(stmt.clone()),
+        _ => panic!(), // unreachable
+      },
+      Err(e) => Err(e),
     }
   }
 
@@ -68,7 +198,7 @@ impl<'a> Parser<'a> {
     Ok(s.into())
   }
 
-  fn var_dec_stmt(&mut self, not_in: bool) -> Result<Stmt, ParsingError> {
+  fn var_dec_stmt(&mut self, not_in: bool, leave_semi: bool) -> Result<Stmt, ParsingError> {
     let mut loc = self.loc();
     self.lexer.advance();
     let mut decs = vec![];
@@ -81,7 +211,7 @@ impl<'a> Parser<'a> {
         self.lexer.advance();
         continue;
       }
-      if self.ahead_is_symbol(Symbol::Semi) {
+      if self.ahead_is_symbol(Symbol::Semi) && !leave_semi {
         self.lexer.advance();
       }
       break;
@@ -668,7 +798,6 @@ impl From<LexError> for ParsingError {
 mod lexer_tests {
   use super::*;
   use crate::source::*;
-  use core::borrow::Borrow;
 
   #[test]
   fn primary_expr() {
@@ -1008,5 +1137,31 @@ mod lexer_tests {
     let alt_body = &alt.body;
     assert_eq!(1, alt_body.len());
     assert_eq!("3", alt_body[0].expr().expr.primary().literal().num().value);
+  }
+
+  #[test]
+  fn for_stmt() {
+    init_token_data();
+
+    let code = String::from("for(var a;b;) {}");
+    let src = Source::new(&code);
+    let mut lexer = Lexer::new(src);
+    let mut parser = Parser::new(&mut lexer);
+
+    let node = parser.stmt().ok().unwrap();
+    assert!(node.is_for());
+  }
+
+  #[test]
+  fn for_in_stmt() {
+    init_token_data();
+
+    let code = String::from("for(var a in b) {}");
+    let src = Source::new(&code);
+    let mut lexer = Lexer::new(src);
+    let mut parser = Parser::new(&mut lexer);
+
+    let node = parser.stmt().ok().unwrap();
+    assert!(node.is_for_in());
   }
 }
