@@ -80,6 +80,16 @@ impl Literal {
       _ => panic!(),
     }
   }
+
+  pub fn loc(&self) -> &SourceLoc {
+    match self {
+      Literal::RegExp(d) => &d.loc,
+      Literal::Null(d) => &d.loc,
+      Literal::Numeric(d) => &d.loc,
+      Literal::String(d) => &d.loc,
+      Literal::Bool(d) => &d.loc,
+    }
+  }
 }
 
 impl From<RegExpData> for Literal {
@@ -627,9 +637,30 @@ pub struct ParenData {
 }
 
 #[derive(Debug)]
+pub struct ExprStmt {
+  pub expr: Expr,
+}
+
+#[derive(Debug)]
+pub struct BlockStmt {
+  pub body: Vec<Stmt>,
+}
+
+#[derive(Debug)]
+pub struct VarDecor {
+  pub id: PrimaryExpr,
+  pub init: Option<Expr>,
+}
+
+#[derive(Debug)]
+pub struct VarDec {
+  pub decs: Vec<VarDecor>,
+}
+
+#[derive(Debug)]
 pub enum Stmt {
   Block(Rc<BlockStmt>),
-  VarDec,
+  VarDec(Rc<VarDec>),
   Empty,
   Expr(Rc<ExprStmt>),
   If,
@@ -658,6 +689,13 @@ impl From<ExprStmt> for Stmt {
   }
 }
 
+impl From<VarDec> for Stmt {
+  fn from(f: VarDec) -> Self {
+    let expr = Rc::new(f);
+    Stmt::VarDec(expr)
+  }
+}
+
 impl Stmt {
   pub fn is_block(&self) -> bool {
     match self {
@@ -669,6 +707,13 @@ impl Stmt {
   pub fn is_expr(&self) -> bool {
     match self {
       Stmt::Expr(_) => true,
+      _ => false,
+    }
+  }
+
+  pub fn is_var(&self) -> bool {
+    match self {
+      Stmt::VarDec(_) => true,
       _ => false,
     }
   }
@@ -686,14 +731,11 @@ impl Stmt {
       _ => panic!(),
     }
   }
-}
 
-#[derive(Debug)]
-pub struct ExprStmt {
-  pub expr: Expr,
-}
-
-#[derive(Debug)]
-pub struct BlockStmt {
-  pub body: Vec<Stmt>,
+  pub fn var_dec(&self) -> &VarDec {
+    match self {
+      Stmt::VarDec(s) => s,
+      _ => panic!(),
+    }
+  }
 }
