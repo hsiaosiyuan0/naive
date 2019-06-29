@@ -488,6 +488,11 @@ pub struct RegExpLiteralData {
 }
 
 #[derive(Debug, Clone)]
+pub struct EofData {
+  pub loc: SourceLoc,
+}
+
+#[derive(Debug, Clone)]
 pub enum Token {
   Keyword(KeywordData),
   Symbol(SymbolData),
@@ -498,6 +503,7 @@ pub enum Token {
   StringLiteral(StringLiteralData),
   NumericLiteral(NumericLiteralData),
   RegExpLiteral(RegExpLiteralData),
+  Eof(EofData),
   Nil,
 }
 
@@ -713,6 +719,13 @@ impl Token {
     }
   }
 
+  pub fn is_eof(&self) -> bool {
+    match self {
+      Token::Eof(_) => true,
+      _ => false,
+    }
+  }
+
   pub fn loc(&self) -> &SourceLoc {
     match self {
       Token::Keyword(data) => &data.loc,
@@ -724,6 +737,7 @@ impl Token {
       Token::StringLiteral(data) => &data.loc,
       Token::NumericLiteral(data) => &data.loc,
       Token::RegExpLiteral(data) => &data.loc,
+      Token::Eof(data) => &data.loc,
       Token::Nil => panic!(),
     }
   }

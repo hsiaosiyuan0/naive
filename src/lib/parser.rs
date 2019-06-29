@@ -13,6 +13,47 @@ impl<'a> Parser<'a> {
     Parser { lexer }
   }
 
+  fn stmt(&mut self) -> Result<Stmt, ParsingError> {
+    if self.ahead_is_symbol(Symbol::BraceL) {
+      self.block_stmt()
+    } else {
+      self.expr_stmt()
+    }
+  }
+
+  fn block_stmt(&mut self) -> Result<Stmt, ParsingError> {
+    self.lexer.advance();
+    let mut b = BlockStmt { body: vec![] };
+    loop {
+      match self.lexer.peek() {
+        Ok(tok) => {
+          if tok.is_symbol_kind(Symbol::BraceR) {
+            self.lexer.advance();
+            break;
+          }
+          match self.stmt() {
+            Ok(stmt) => b.body.push(stmt),
+            Err(e) => return Err(e),
+          }
+        }
+        Err(e) => return Err(e.into()),
+      }
+    }
+    Ok(b.into())
+  }
+
+  fn expr_stmt(&mut self) -> Result<Stmt, ParsingError> {
+    match self.expr() {
+      Ok(expr) => {
+        if self.ahead_is_symbol(Symbol::Semi) {
+          self.lexer.advance();
+        }
+        Ok(ExprStmt { expr }.into())
+      }
+      Err(e) => Err(e),
+    }
+  }
+
   fn expr(&mut self) -> Result<Expr, ParsingError> {
     let first = match self.assign_expr() {
       Ok(expr) => expr,
@@ -42,7 +83,7 @@ impl<'a> Parser<'a> {
         break;
       }
     }
-    let seq = SeqExpr { expressions: seq };
+    let seq = SeqExpr { exprs: seq };
     Ok(seq.into())
   }
 
@@ -754,8 +795,30 @@ mod lexer_tests {
     let node = parser.expr().ok().unwrap();
     assert!(node.is_seq());
     let seq = node.seq_expr();
-    assert_eq!(3, seq.expressions.len());
-    let arr = seq.expressions[2].primary().array();
+    assert_eq!(3, seq.exprs.len());
+    let arr = seq.exprs[2].primary().array();
     assert_eq!(2, arr.value.len());
+  }
+
+  #[test]
+  fn block_stmt() {
+    init_token_data();
+
+    let code = String::from(
+      "{
+     a + b;
+     1 + 2
+    }",
+    );
+    let src = Source::new(&code);
+    let mut lexer = Lexer::new(src);
+    let mut parser = Parser::new(&mut lexer);
+
+    let node = parser.stmt().ok().unwrap();
+    assert!(node.is_block());
+    let block = node.block();
+    assert_eq!(2, block.body.len());
+    let stmt = block.body[0].expr();
+    assert!(stmt.expr.is_bin());
   }
 }

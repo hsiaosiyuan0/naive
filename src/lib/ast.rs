@@ -326,7 +326,7 @@ pub struct AssignExpr {
 
 #[derive(Debug)]
 pub struct SeqExpr {
-  pub expressions: Vec<Expr>,
+  pub exprs: Vec<Expr>,
 }
 
 #[derive(Debug)]
@@ -624,4 +624,76 @@ pub struct ObjectData {
 pub struct ParenData {
   pub loc: SourceLoc,
   pub value: Expr,
+}
+
+#[derive(Debug)]
+pub enum Stmt {
+  Block(Rc<BlockStmt>),
+  VarDec,
+  Empty,
+  Expr(Rc<ExprStmt>),
+  If,
+  For,
+  ForIn,
+  Cont,
+  Break,
+  Return,
+  With,
+  Throw,
+  Try,
+  Debugger,
+}
+
+impl From<BlockStmt> for Stmt {
+  fn from(f: BlockStmt) -> Self {
+    let expr = Rc::new(f);
+    Stmt::Block(expr)
+  }
+}
+
+impl From<ExprStmt> for Stmt {
+  fn from(f: ExprStmt) -> Self {
+    let expr = Rc::new(f);
+    Stmt::Expr(expr)
+  }
+}
+
+impl Stmt {
+  pub fn is_block(&self) -> bool {
+    match self {
+      Stmt::Block(_) => true,
+      _ => false,
+    }
+  }
+
+  pub fn is_expr(&self) -> bool {
+    match self {
+      Stmt::Expr(_) => true,
+      _ => false,
+    }
+  }
+
+  pub fn block(&self) -> &BlockStmt {
+    match self {
+      Stmt::Block(s) => s,
+      _ => panic!(),
+    }
+  }
+
+  pub fn expr(&self) -> &ExprStmt {
+    match self {
+      Stmt::Expr(s) => s,
+      _ => panic!(),
+    }
+  }
+}
+
+#[derive(Debug)]
+pub struct ExprStmt {
+  pub expr: Expr,
+}
+
+#[derive(Debug)]
+pub struct BlockStmt {
+  pub body: Vec<Stmt>,
 }

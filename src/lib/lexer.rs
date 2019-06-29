@@ -124,8 +124,12 @@ impl<'a> Lexer<'a> {
     } else if self.ahead_is_string_start() {
       let t = self.src.read().unwrap();
       self.read_string(t)
-    } else {
+    } else if !self.ahead_is_eof() {
       self.read_symbol()
+    } else {
+      Ok(Token::Eof(EofData {
+        loc: self.loc().clone(),
+      }))
     }
   }
 
