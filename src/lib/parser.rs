@@ -18,17 +18,63 @@ impl<'a> Parser<'a> {
       self.block_stmt()
     } else if self.ahead_is_keyword(Keyword::Var) {
       self.var_dec_stmt(false)
+    } else if self.ahead_is_keyword(Keyword::If) {
+      self.if_stmt()
     } else {
       self.expr_stmt()
     }
   }
 
-  fn var_dec_stmt(&mut self, not_in: bool) -> Result<Stmt, ParsingError> {
+  fn if_stmt(&mut self) -> Result<Stmt, ParsingError> {
+    let mut loc = self.loc();
     self.lexer.advance();
-    let mut var_dec = VarDec { decs: vec![] };
+
+    if !self.ahead_is_symbol(Symbol::ParenL) {
+      return Err(ParserError::at(&self.loc()).into());
+    }
+    self.lexer.advance();
+
+    let test = match self.expr(false) {
+      Ok(expr) => expr,
+      Err(e) => return Err(e),
+    };
+
+    if !self.ahead_is_symbol(Symbol::ParenR) {
+      return Err(ParserError::at(&self.loc()).into());
+    }
+    self.lexer.advance();
+
+    let cons = match self.stmt() {
+      Ok(stmt) => stmt,
+      Err(e) => return Err(e),
+    };
+
+    let mut alt: Option<Stmt> = None;
+    if self.ahead_is_keyword(Keyword::Else) {
+      self.lexer.advance();
+      alt = match self.stmt() {
+        Ok(stmt) => Some(stmt),
+        Err(e) => return Err(e),
+      };
+    }
+
+    loc.end = self.pos();
+    let s = IfStmt {
+      loc,
+      test,
+      cons,
+      alt,
+    };
+    Ok(s.into())
+  }
+
+  fn var_dec_stmt(&mut self, not_in: bool) -> Result<Stmt, ParsingError> {
+    let mut loc = self.loc();
+    self.lexer.advance();
+    let mut decs = vec![];
     loop {
       match self.var_decor(not_in) {
-        Ok(dec) => var_dec.decs.push(dec),
+        Ok(dec) => decs.push(dec),
         Err(e) => return Err(e),
       }
       if self.ahead_is_symbol(Symbol::Comma) {
@@ -40,6 +86,8 @@ impl<'a> Parser<'a> {
       }
       break;
     }
+    loc.end = self.pos();
+    let var_dec = VarDec { loc, decs };
     Ok(var_dec.into())
   }
 
@@ -66,8 +114,9 @@ impl<'a> Parser<'a> {
   }
 
   fn block_stmt(&mut self) -> Result<Stmt, ParsingError> {
+    let mut loc = self.loc();
     self.lexer.advance();
-    let mut b = BlockStmt { body: vec![] };
+    let mut body = vec![];
     loop {
       match self.lexer.peek() {
         Ok(tok) => {
@@ -76,13 +125,15 @@ impl<'a> Parser<'a> {
             break;
           }
           match self.stmt() {
-            Ok(stmt) => b.body.push(stmt),
+            Ok(stmt) => body.push(stmt),
             Err(e) => return Err(e),
           }
         }
         Err(e) => return Err(e.into()),
       }
     }
+    loc.end = self.pos();
+    let b = BlockStmt { loc, body };
     Ok(b.into())
   }
 
@@ -99,6 +150,7 @@ impl<'a> Parser<'a> {
   }
 
   fn expr(&mut self, not_in: bool) -> Result<Expr, ParsingError> {
+    let mut loc = self.loc();
     let first = match self.assign_expr(not_in) {
       Ok(expr) => expr,
       Err(e) => return Err(e),
@@ -127,11 +179,13 @@ impl<'a> Parser<'a> {
         break;
       }
     }
-    let seq = SeqExpr { exprs: seq };
+    loc.end = self.pos();
+    let seq = SeqExpr { loc, exprs: seq };
     Ok(seq.into())
   }
 
   fn assign_expr(&mut self, not_in: bool) -> Result<Expr, ParsingError> {
+    let mut loc = self.loc();
     let lhs = match self.cond_expr(not_in) {
       Ok(expr) => expr,
       Err(e) => return Err(e),
@@ -152,7 +206,9 @@ impl<'a> Parser<'a> {
       Err(e) => return Err(e),
     };
 
+    loc.end = self.pos();
     let assign = AssignExpr {
+      loc,
       op,
       left: lhs,
       right: rhs,
@@ -161,6 +217,7 @@ impl<'a> Parser<'a> {
   }
 
   fn cond_expr(&mut self, not_in: bool) -> Result<Expr, ParsingError> {
+    let mut loc = self.loc();
     let test = match self.expr_op(None, 0, not_in) {
       Ok(expr) => expr,
       Err(e) => return Err(e),
@@ -194,7 +251,13 @@ impl<'a> Parser<'a> {
       Err(e) => return Err(e),
     };
 
-    let cond = CondExpr { test, cons, alt };
+    loc.end = self.pos();
+    let cond = CondExpr {
+      loc,
+      test,
+      cons,
+      alt,
+    };
     Ok(cond.into())
   }
 
@@ -204,6 +267,7 @@ impl<'a> Parser<'a> {
     min_pcd: i32,
     not_in: bool,
   ) -> Result<Expr, ParsingError> {
+    let mut loc = self.loc();
     let mut lhs = match lhs {
       Some(expr) => expr,
       _ => match self.unary_expr() {
@@ -241,7 +305,9 @@ impl<'a> Parser<'a> {
           };
         }
       }
+      loc.end = self.pos();
       let bin = BinaryExpr {
+        loc,
         op,
         left: lhs,
         right: rhs,
@@ -252,12 +318,20 @@ impl<'a> Parser<'a> {
   }
 
   fn postfix_expr(&mut self) -> Result<Expr, ParsingError> {
+    let mut loc = self.loc();
     match self.lhs_expr() {
       Ok(expr) => {
         if let Ok(tok) = self.lexer.peek() {
           if tok.is_symbol_kind(Symbol::Inc) || tok.is_symbol_kind(Symbol::Dec) {
             let tok = self.lexer.next().ok().unwrap();
-            let expr = UnaryExpr::new(tok.deref().clone(), expr, false).into();
+            loc.end = self.pos();
+            let expr: Expr = UnaryExpr {
+              loc,
+              op: tok.deref().clone(),
+              argument: expr,
+              prefix: false,
+            }
+            .into();
             return Ok(expr);
           }
         }
@@ -268,6 +342,7 @@ impl<'a> Parser<'a> {
   }
 
   fn unary_expr(&mut self) -> Result<Expr, ParsingError> {
+    let mut loc = self.loc();
     let tok = match self.lexer.peek() {
       Ok(tok) => tok,
       Err(e) => return Err(e.into()),
@@ -287,7 +362,9 @@ impl<'a> Parser<'a> {
         Ok(expr) => expr,
         Err(e) => return Err(e),
       };
+      loc.end = self.pos();
       let expr = UnaryExpr {
+        loc,
         op,
         argument,
         prefix: true,
@@ -328,6 +405,7 @@ impl<'a> Parser<'a> {
   }
 
   fn new_expr(&mut self) -> Result<Expr, ParsingError> {
+    let mut loc = self.loc();
     self.lexer.advance();
     let callee = match self.ahead_is_keyword(Keyword::New) {
       true => self.new_expr(),
@@ -344,7 +422,12 @@ impl<'a> Parser<'a> {
       },
       false => vec![],
     };
-    let expr = NewExpr { callee, arguments };
+    loc.end = self.pos();
+    let expr = NewExpr {
+      loc,
+      callee,
+      arguments,
+    };
     Ok(expr.into())
   }
 
@@ -368,6 +451,7 @@ impl<'a> Parser<'a> {
   }
 
   fn call_expr(&mut self, callee: Option<Expr>) -> Result<Expr, ParsingError> {
+    let mut loc = self.loc();
     let callee = match callee {
       Some(expr) => expr,
       _ => match self.member_expr(None) {
@@ -384,7 +468,13 @@ impl<'a> Parser<'a> {
       Ok(args) => args,
       Err(e) => return Err(e),
     };
-    let mut expr: Expr = CallExpr { callee, arguments }.into();
+    loc.end = self.pos();
+    let mut expr: Expr = CallExpr {
+      loc,
+      callee,
+      arguments,
+    }
+    .into();
     if self.ahead_is_symbol_or(Symbol::Dot, Symbol::BracketL) {
       expr = match self.member_expr(Some(expr)) {
         Ok(expr) => expr,
@@ -400,6 +490,7 @@ impl<'a> Parser<'a> {
   }
 
   fn member_expr(&mut self, obj: Option<Expr>) -> Result<Expr, ParsingError> {
+    let mut loc = self.loc();
     let mut obj = match obj {
       Some(o) => o,
       _ => match self.primary_expr() {
@@ -420,7 +511,9 @@ impl<'a> Parser<'a> {
                 tok.loc().clone(),
                 tok.id_data().clone().value,
               ));
+              loc.end = self.pos();
               obj = Expr::Member(Rc::new(MemberExpr {
+                loc,
                 object: obj,
                 property: prop.into(),
                 computed: false,
@@ -443,7 +536,9 @@ impl<'a> Parser<'a> {
             }
             Err(e) => return Err(e.into()),
           }
+          loc.end = self.pos();
           obj = Expr::Member(Rc::new(MemberExpr {
+            loc,
             object: obj,
             property: prop,
             computed: true,
@@ -512,6 +607,14 @@ impl<'a> Parser<'a> {
     }
     Ok(ret.into())
   }
+
+  fn pos(&mut self) -> Position {
+    self.lexer.pos()
+  }
+
+  fn loc(&mut self) -> SourceLoc {
+    self.lexer.loc()
+  }
 }
 
 pub struct ParserError {
@@ -565,6 +668,7 @@ impl From<LexError> for ParsingError {
 mod lexer_tests {
   use super::*;
   use crate::source::*;
+  use core::borrow::Borrow;
 
   #[test]
   fn primary_expr() {
@@ -883,5 +987,26 @@ mod lexer_tests {
     assert!(node.is_var());
     let var_dec = node.var_dec();
     assert_eq!(3, var_dec.decs.len());
+  }
+
+  #[test]
+  fn if_stmt() {
+    init_token_data();
+
+    let code = String::from("if (true) 1 + 2 else { 3 }");
+    let src = Source::new(&code);
+    let mut lexer = Lexer::new(src);
+    let mut parser = Parser::new(&mut lexer);
+
+    let node = parser.stmt().ok().unwrap();
+    assert!(node.is_if());
+    let if_stmt = node.if_stmt();
+    let cons = if_stmt.cons.expr().expr.bin_expr();
+    assert!(cons.op.is_symbol_kind(Symbol::Add));
+    let alt = if_stmt.alt.as_ref().unwrap();
+    let alt = alt.block();
+    let alt_body = &alt.body;
+    assert_eq!(1, alt_body.len());
+    assert_eq!("3", alt_body[0].expr().expr.primary().literal().num().value);
   }
 }

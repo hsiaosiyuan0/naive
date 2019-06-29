@@ -279,23 +279,15 @@ impl From<ArrayData> for PrimaryExpr {
 
 #[derive(Debug)]
 pub struct UnaryExpr {
+  pub loc: SourceLoc,
   pub op: Token,
   pub argument: Expr,
   pub prefix: bool,
 }
 
-impl UnaryExpr {
-  pub fn new(op: Token, argument: Expr, prefix: bool) -> Self {
-    UnaryExpr {
-      op,
-      argument,
-      prefix,
-    }
-  }
-}
-
 #[derive(Debug)]
 pub struct BinaryExpr {
+  pub loc: SourceLoc,
   pub op: Token,
   pub left: Expr,
   pub right: Expr,
@@ -303,6 +295,7 @@ pub struct BinaryExpr {
 
 #[derive(Debug)]
 pub struct MemberExpr {
+  pub loc: SourceLoc,
   pub object: Expr,
   pub property: Expr,
   pub computed: bool,
@@ -310,18 +303,21 @@ pub struct MemberExpr {
 
 #[derive(Debug)]
 pub struct NewExpr {
+  pub loc: SourceLoc,
   pub callee: Expr,
   pub arguments: Vec<Expr>,
 }
 
 #[derive(Debug)]
 pub struct CallExpr {
+  pub loc: SourceLoc,
   pub callee: Expr,
   pub arguments: Vec<Expr>,
 }
 
 #[derive(Debug)]
 pub struct CondExpr {
+  pub loc: SourceLoc,
   pub test: Expr,
   pub cons: Expr,
   pub alt: Expr,
@@ -329,6 +325,7 @@ pub struct CondExpr {
 
 #[derive(Debug)]
 pub struct AssignExpr {
+  pub loc: SourceLoc,
   pub op: Token,
   pub left: Expr,
   pub right: Expr,
@@ -336,6 +333,7 @@ pub struct AssignExpr {
 
 #[derive(Debug)]
 pub struct SeqExpr {
+  pub loc: SourceLoc,
   pub exprs: Vec<Expr>,
 }
 
@@ -643,6 +641,7 @@ pub struct ExprStmt {
 
 #[derive(Debug)]
 pub struct BlockStmt {
+  pub loc: SourceLoc,
   pub body: Vec<Stmt>,
 }
 
@@ -654,25 +653,126 @@ pub struct VarDecor {
 
 #[derive(Debug)]
 pub struct VarDec {
+  pub loc: SourceLoc,
   pub decs: Vec<VarDecor>,
+}
+
+#[derive(Debug)]
+pub struct EmptyStmt {
+  pub loc: SourceLoc,
+}
+
+#[derive(Debug)]
+pub struct IfStmt {
+  pub loc: SourceLoc,
+  pub test: Expr,
+  pub cons: Stmt,
+  pub alt: Option<Stmt>,
+}
+
+#[derive(Debug)]
+pub struct ForStmt {
+  pub loc: SourceLoc,
+  pub init: Option<VarDec>,
+  pub test: Option<Expr>,
+  pub update: Option<Expr>,
+  pub body: Stmt,
+}
+
+#[derive(Debug)]
+pub enum ForInLeft {
+  VarDec(VarDecor),
+  LVar(Expr),
+}
+
+#[derive(Debug)]
+pub struct ForInStmt {
+  pub loc: SourceLoc,
+  pub left: ForInLeft,
+  pub right: Expr,
+  pub body: Stmt,
+}
+
+#[derive(Debug)]
+pub struct DoWhileStmt {
+  pub loc: SourceLoc,
+  pub test: Expr,
+  pub body: Stmt,
+}
+
+#[derive(Debug)]
+pub struct WhileStmt {
+  pub loc: SourceLoc,
+  pub test: Expr,
+  pub body: Stmt,
+}
+
+#[derive(Debug)]
+pub struct ContStmt {
+  pub loc: SourceLoc,
+}
+
+#[derive(Debug)]
+pub struct BreakStmt {
+  pub loc: SourceLoc,
+}
+
+#[derive(Debug)]
+pub struct ReturnStmt {
+  pub loc: SourceLoc,
+  pub argument: Option<Expr>,
+}
+
+#[derive(Debug)]
+pub struct WithStmt {
+  pub loc: SourceLoc,
+  pub object: Expr,
+  pub body: Stmt,
+}
+
+#[derive(Debug)]
+pub struct ThrowStmt {
+  pub loc: SourceLoc,
+  pub argument: Option<Expr>,
+}
+
+#[derive(Debug)]
+pub struct CatchClause {
+  pub id: IdData,
+  pub body: BreakStmt,
+}
+
+#[derive(Debug)]
+pub struct TryStmt {
+  pub loc: SourceLoc,
+  pub block: BlockStmt,
+  pub handler: Option<CatchClause>,
+  pub finalizer: Option<BlockStmt>,
+}
+
+#[derive(Debug)]
+pub struct DebugStmt {
+  pub loc: SourceLoc,
 }
 
 #[derive(Debug)]
 pub enum Stmt {
   Block(Rc<BlockStmt>),
   VarDec(Rc<VarDec>),
-  Empty,
+  Empty(Rc<EmptyStmt>),
   Expr(Rc<ExprStmt>),
-  If,
-  For,
-  ForIn,
-  Cont,
-  Break,
-  Return,
-  With,
-  Throw,
-  Try,
-  Debugger,
+  If(Rc<IfStmt>),
+  For(Rc<ForInStmt>),
+  ForIn(Rc<ForInStmt>),
+  DoWhile(Rc<DoWhileStmt>),
+  While(Rc<WhileStmt>),
+  Cont(Rc<ContStmt>),
+  Break(Rc<BreakStmt>),
+  Return(Rc<ReturnStmt>),
+  With(Rc<WithStmt>),
+  Throw(Rc<ThrowStmt>),
+  Try(Rc<TryStmt>),
+  Debugger(Rc<DebugStmt>),
 }
 
 impl From<BlockStmt> for Stmt {
@@ -693,6 +793,13 @@ impl From<VarDec> for Stmt {
   fn from(f: VarDec) -> Self {
     let expr = Rc::new(f);
     Stmt::VarDec(expr)
+  }
+}
+
+impl From<IfStmt> for Stmt {
+  fn from(f: IfStmt) -> Self {
+    let expr = Rc::new(f);
+    Stmt::If(expr)
   }
 }
 
@@ -718,6 +825,13 @@ impl Stmt {
     }
   }
 
+  pub fn is_if(&self) -> bool {
+    match self {
+      Stmt::If(_) => true,
+      _ => false,
+    }
+  }
+
   pub fn block(&self) -> &BlockStmt {
     match self {
       Stmt::Block(s) => s,
@@ -735,6 +849,13 @@ impl Stmt {
   pub fn var_dec(&self) -> &VarDec {
     match self {
       Stmt::VarDec(s) => s,
+      _ => panic!(),
+    }
+  }
+
+  pub fn if_stmt(&self) -> &IfStmt {
+    match self {
+      Stmt::If(s) => s,
       _ => panic!(),
     }
   }

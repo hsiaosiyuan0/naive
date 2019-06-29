@@ -221,14 +221,14 @@ impl<'a> Lexer<'a> {
     )
   }
 
-  fn pos(&self) -> Position {
+  pub fn pos(&self) -> Position {
     Position {
       line: self.src.line,
       column: self.src.column,
     }
   }
 
-  fn loc(&self) -> SourceLoc {
+  pub fn loc(&self) -> SourceLoc {
     SourceLoc {
       start: self.pos(),
       end: Position::new(),
