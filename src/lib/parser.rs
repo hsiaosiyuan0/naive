@@ -32,11 +32,152 @@ impl<'a> Parser<'a> {
       self.break_stmt()
     } else if self.ahead_is_keyword(Keyword::Return) {
       self.ret_stmt()
+    } else if self.ahead_is_keyword(Keyword::With) {
+      self.with_stmt()
+    } else if self.ahead_is_keyword(Keyword::Switch) {
+      self.switch_stmt()
     } else if self.ahead_is_symbol(Symbol::Semi) {
       self.empty_stmt()
     } else {
       self.expr_stmt()
     }
+  }
+
+  fn switch_stmt(&mut self) -> Result<Stmt, ParsingError> {
+    let mut loc = self.loc();
+    self.lexer.advance();
+
+    match self.ahead_is_symbol(Symbol::ParenL) {
+      true => self.lexer.advance(),
+      false => return Err(ParserError::at(&self.loc()).into()),
+    };
+
+    let discrim = match self.expr(false) {
+      Ok(expr) => expr,
+      Err(e) => return Err(e),
+    };
+
+    match self.ahead_is_symbol(Symbol::ParenR) {
+      true => self.lexer.advance(),
+      false => return Err(ParserError::at(&self.loc()).into()),
+    };
+
+    match self.ahead_is_symbol(Symbol::BraceL) {
+      true => self.lexer.advance(),
+      false => return Err(ParserError::at(&self.loc()).into()),
+    };
+
+    let mut cases = vec![];
+    let mut met_default = false;
+    loop {
+      if self.ahead_is_symbol(Symbol::BraceR) {
+        self.lexer.advance();
+        break;
+      } else if self.ahead_is_keyword(Keyword::Case) {
+        match self.switch_case() {
+          Ok(case) => cases.push(case),
+          Err(e) => return Err(e),
+        };
+      } else if self.ahead_is_keyword(Keyword::Default) {
+        if !met_default {
+          met_default = true;
+          match self.switch_default() {
+            Ok(case) => cases.push(case),
+            Err(e) => return Err(e),
+          };
+        } else {
+          return Err(ParserError::at(&self.loc()).into());
+        }
+      }
+    }
+
+    loc.end = self.pos();
+    let switch = SwitchStmt {
+      loc,
+      discrim,
+      cases,
+    };
+    Ok(switch.into())
+  }
+
+  fn switch_default(&mut self) -> Result<SwitchCase, ParsingError> {
+    self.lexer.advance();
+
+    match self.ahead_is_symbol(Symbol::Colon) {
+      true => self.lexer.advance(),
+      false => return Err(ParserError::at(&self.loc()).into()),
+    };
+
+    let mut cons = vec![];
+    loop {
+      let stmt = match self.stmt() {
+        Ok(stmt) => stmt,
+        Err(e) => return Err(e),
+      };
+      cons.push(stmt);
+      if self.ahead_is_keyword(Keyword::Case) || self.ahead_is_symbol(Symbol::BraceR) {
+        break;
+      }
+    }
+
+    Ok(SwitchCase { test: None, cons })
+  }
+
+  fn switch_case(&mut self) -> Result<SwitchCase, ParsingError> {
+    self.lexer.advance();
+
+    let test = match self.expr(false) {
+      Ok(expr) => Some(expr),
+      Err(e) => return Err(e),
+    };
+
+    match self.ahead_is_symbol(Symbol::Colon) {
+      true => self.lexer.advance(),
+      false => return Err(ParserError::at(&self.loc()).into()),
+    };
+
+    let mut cons = vec![];
+    loop {
+      let stmt = match self.stmt() {
+        Ok(stmt) => stmt,
+        Err(e) => return Err(e),
+      };
+      cons.push(stmt);
+      if self.ahead_is_keyword(Keyword::Case) || self.ahead_is_symbol(Symbol::BraceR) {
+        break;
+      }
+    }
+
+    Ok(SwitchCase { test, cons })
+  }
+
+  fn with_stmt(&mut self) -> Result<Stmt, ParsingError> {
+    let mut loc = self.loc();
+    self.lexer.advance();
+
+    match self.ahead_is_symbol(Symbol::ParenL) {
+      true => self.lexer.advance(),
+      false => return Err(ParserError::at(&self.loc()).into()),
+    };
+
+    let object = match self.expr(false) {
+      Ok(expr) => expr,
+      Err(e) => return Err(e),
+    };
+
+    match self.ahead_is_symbol(Symbol::ParenR) {
+      true => self.lexer.advance(),
+      false => return Err(ParserError::at(&self.loc()).into()),
+    };
+
+    let body = match self.stmt() {
+      Ok(stmt) => stmt,
+      Err(e) => return Err(e),
+    };
+
+    loc.end = self.pos();
+    let stmt = WithStmt { loc, object, body };
+    Ok(stmt.into())
   }
 
   fn empty_stmt(&mut self) -> Result<Stmt, ParsingError> {
@@ -1359,5 +1500,42 @@ mod lexer_tests {
 
     let node = parser.stmt().ok().unwrap();
     assert!(node.is_empty());
+  }
+
+  #[test]
+  fn with_stmt() {
+    init_token_data();
+
+    let code = String::from("with(a) 1");
+    let src = Source::new(&code);
+    let mut lexer = Lexer::new(src);
+    let mut parser = Parser::new(&mut lexer);
+
+    let node = parser.stmt().ok().unwrap();
+    assert!(node.is_with());
+  }
+
+  #[test]
+  fn switch_stmt() {
+    init_token_data();
+
+    let code = String::from(
+      "switch (c) {
+  default: break
+  case 1:
+    1 + 2;
+    3 + 3;
+}",
+    );
+    let src = Source::new(&code);
+    let mut lexer = Lexer::new(src);
+    let mut parser = Parser::new(&mut lexer);
+
+    let node = parser.stmt().ok().unwrap();
+    assert!(node.is_switch());
+    let switch = node.switch_stmt();
+    assert_eq!(2, switch.cases.len());
+    let case = &switch.cases[1];
+    assert_eq!(2, case.cons.len());
   }
 }

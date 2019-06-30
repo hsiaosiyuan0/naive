@@ -1,5 +1,4 @@
 use crate::token::*;
-use std::io::Empty;
 use std::rc::Rc;
 
 #[derive(Debug)]
@@ -732,8 +731,16 @@ pub struct WithStmt {
 }
 
 #[derive(Debug)]
+pub struct SwitchCase {
+  pub test: Option<Expr>,
+  pub cons: Vec<Stmt>,
+}
+
+#[derive(Debug)]
 pub struct SwitchStmt {
   pub loc: SourceLoc,
+  pub discrim: Expr,
+  pub cases: Vec<SwitchCase>,
 }
 
 #[derive(Debug)]
@@ -866,6 +873,20 @@ impl From<EmptyStmt> for Stmt {
   }
 }
 
+impl From<WithStmt> for Stmt {
+  fn from(f: WithStmt) -> Self {
+    let expr = Rc::new(f);
+    Stmt::With(expr)
+  }
+}
+
+impl From<SwitchStmt> for Stmt {
+  fn from(f: SwitchStmt) -> Self {
+    let expr = Rc::new(f);
+    Stmt::Switch(expr)
+  }
+}
+
 impl Stmt {
   pub fn is_block(&self) -> bool {
     match self {
@@ -951,6 +972,20 @@ impl Stmt {
     }
   }
 
+  pub fn is_with(&self) -> bool {
+    match self {
+      Stmt::With(_) => true,
+      _ => false,
+    }
+  }
+
+  pub fn is_switch(&self) -> bool {
+    match self {
+      Stmt::Switch(_) => true,
+      _ => false,
+    }
+  }
+
   pub fn block(&self) -> &BlockStmt {
     match self {
       Stmt::Block(s) => s,
@@ -1031,6 +1066,20 @@ impl Stmt {
   pub fn empty(&self) -> &EmptyStmt {
     match self {
       Stmt::Empty(s) => s,
+      _ => panic!(),
+    }
+  }
+
+  pub fn with_stmt(&self) -> &WithStmt {
+    match self {
+      Stmt::With(s) => s,
+      _ => panic!(),
+    }
+  }
+
+  pub fn switch_stmt(&self) -> &SwitchStmt {
+    match self {
+      Stmt::Switch(s) => s,
       _ => panic!(),
     }
   }
