@@ -823,6 +823,20 @@ impl From<ForStmt> for Stmt {
   }
 }
 
+impl From<DoWhileStmt> for Stmt {
+  fn from(f: DoWhileStmt) -> Self {
+    let expr = Rc::new(f);
+    Stmt::DoWhile(expr)
+  }
+}
+
+impl From<WhileStmt> for Stmt {
+  fn from(f: WhileStmt) -> Self {
+    let expr = Rc::new(f);
+    Stmt::While(expr)
+  }
+}
+
 impl Stmt {
   pub fn is_block(&self) -> bool {
     match self {
@@ -866,6 +880,20 @@ impl Stmt {
     }
   }
 
+  pub fn is_do_while(&self) -> bool {
+    match self {
+      Stmt::DoWhile(_) => true,
+      _ => false,
+    }
+  }
+
+  pub fn is_while_stmt(&self) -> bool {
+    match self {
+      Stmt::While(_) => true,
+      _ => false,
+    }
+  }
+
   pub fn block(&self) -> &BlockStmt {
     match self {
       Stmt::Block(s) => s,
@@ -904,6 +932,20 @@ impl Stmt {
   pub fn for_in(&self) -> &ForInStmt {
     match self {
       Stmt::ForIn(s) => s,
+      _ => panic!(),
+    }
+  }
+
+  pub fn do_while(&self) -> &DoWhileStmt {
+    match self {
+      Stmt::DoWhile(s) => s,
+      _ => panic!(),
+    }
+  }
+
+  pub fn while_stmt(&self) -> &WhileStmt {
+    match self {
+      Stmt::While(s) => s,
       _ => panic!(),
     }
   }

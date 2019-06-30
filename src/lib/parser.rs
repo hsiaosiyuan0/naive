@@ -22,9 +22,76 @@ impl<'a> Parser<'a> {
       self.if_stmt()
     } else if self.ahead_is_keyword(Keyword::For) {
       self.for_stmt()
+    } else if self.ahead_is_keyword(Keyword::Do) {
+      self.do_while()
+    } else if self.ahead_is_keyword(Keyword::While) {
+      self.while_stmt()
     } else {
       self.expr_stmt()
     }
+  }
+
+  fn while_stmt(&mut self) -> Result<Stmt, ParsingError> {
+    let mut loc = self.loc();
+    self.lexer.advance();
+
+    match self.ahead_is_symbol(Symbol::ParenL) {
+      true => self.lexer.advance(),
+      false => return Err(ParserError::at(&self.loc()).into()),
+    };
+
+    let test = match self.expr(false) {
+      Ok(expr) => expr,
+      Err(e) => return Err(e),
+    };
+
+    match self.ahead_is_symbol(Symbol::ParenR) {
+      true => self.lexer.advance(),
+      false => return Err(ParserError::at(&self.loc()).into()),
+    };
+
+    let body = match self.stmt() {
+      Ok(stmt) => stmt,
+      Err(e) => return Err(e),
+    };
+
+    loc.end = self.pos();
+    let stmt = WhileStmt { loc, test, body };
+    Ok(stmt.into())
+  }
+
+  fn do_while(&mut self) -> Result<Stmt, ParsingError> {
+    let mut loc = self.loc();
+    self.lexer.advance();
+
+    let body = match self.stmt() {
+      Ok(stmt) => stmt,
+      Err(e) => return Err(e),
+    };
+
+    match self.ahead_is_keyword(Keyword::While) {
+      true => self.lexer.advance(),
+      false => return Err(ParserError::at(&self.loc()).into()),
+    };
+
+    match self.ahead_is_symbol(Symbol::ParenL) {
+      true => self.lexer.advance(),
+      false => return Err(ParserError::at(&self.loc()).into()),
+    };
+
+    let test = match self.expr(false) {
+      Ok(expr) => expr,
+      Err(e) => return Err(e),
+    };
+
+    match self.ahead_is_symbol(Symbol::ParenR) {
+      true => self.lexer.advance(),
+      false => return Err(ParserError::at(&self.loc()).into()),
+    };
+
+    loc.end = self.pos();
+    let stmt = DoWhileStmt { loc, test, body };
+    Ok(stmt.into())
   }
 
   fn for_stmt(&mut self) -> Result<Stmt, ParsingError> {
@@ -1163,5 +1230,31 @@ mod lexer_tests {
 
     let node = parser.stmt().ok().unwrap();
     assert!(node.is_for_in());
+  }
+
+  #[test]
+  fn do_while_stmt() {
+    init_token_data();
+
+    let code = String::from("do 1 + 2 while(true)");
+    let src = Source::new(&code);
+    let mut lexer = Lexer::new(src);
+    let mut parser = Parser::new(&mut lexer);
+
+    let node = parser.stmt().ok().unwrap();
+    assert!(node.is_do_while());
+  }
+
+  #[test]
+  fn while_stmt() {
+    init_token_data();
+
+    let code = String::from("while(true) 1 + 2");
+    let src = Source::new(&code);
+    let mut lexer = Lexer::new(src);
+    let mut parser = Parser::new(&mut lexer);
+
+    let node = parser.stmt().ok().unwrap();
+    assert!(node.is_while_stmt());
   }
 }
