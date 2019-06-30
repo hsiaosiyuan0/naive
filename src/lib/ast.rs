@@ -1,4 +1,5 @@
 use crate::token::*;
+use std::io::Empty;
 use std::rc::Rc;
 
 #[derive(Debug)]
@@ -837,6 +838,34 @@ impl From<WhileStmt> for Stmt {
   }
 }
 
+impl From<ContStmt> for Stmt {
+  fn from(f: ContStmt) -> Self {
+    let expr = Rc::new(f);
+    Stmt::Cont(expr)
+  }
+}
+
+impl From<BreakStmt> for Stmt {
+  fn from(f: BreakStmt) -> Self {
+    let expr = Rc::new(f);
+    Stmt::Break(expr)
+  }
+}
+
+impl From<ReturnStmt> for Stmt {
+  fn from(f: ReturnStmt) -> Self {
+    let expr = Rc::new(f);
+    Stmt::Return(expr)
+  }
+}
+
+impl From<EmptyStmt> for Stmt {
+  fn from(f: EmptyStmt) -> Self {
+    let expr = Rc::new(f);
+    Stmt::Empty(expr)
+  }
+}
+
 impl Stmt {
   pub fn is_block(&self) -> bool {
     match self {
@@ -894,6 +923,34 @@ impl Stmt {
     }
   }
 
+  pub fn is_ret(&self) -> bool {
+    match self {
+      Stmt::Return(_) => true,
+      _ => false,
+    }
+  }
+
+  pub fn is_cont(&self) -> bool {
+    match self {
+      Stmt::Cont(_) => true,
+      _ => false,
+    }
+  }
+
+  pub fn is_break(&self) -> bool {
+    match self {
+      Stmt::Break(_) => true,
+      _ => false,
+    }
+  }
+
+  pub fn is_empty(&self) -> bool {
+    match self {
+      Stmt::Empty(_) => true,
+      _ => false,
+    }
+  }
+
   pub fn block(&self) -> &BlockStmt {
     match self {
       Stmt::Block(s) => s,
@@ -946,6 +1003,34 @@ impl Stmt {
   pub fn while_stmt(&self) -> &WhileStmt {
     match self {
       Stmt::While(s) => s,
+      _ => panic!(),
+    }
+  }
+
+  pub fn cont(&self) -> &ContStmt {
+    match self {
+      Stmt::Cont(s) => s,
+      _ => panic!(),
+    }
+  }
+
+  pub fn break_stmt(&self) -> &BreakStmt {
+    match self {
+      Stmt::Break(s) => s,
+      _ => panic!(),
+    }
+  }
+
+  pub fn ret_stmt(&self) -> &ReturnStmt {
+    match self {
+      Stmt::Return(s) => s,
+      _ => panic!(),
+    }
+  }
+
+  pub fn empty(&self) -> &EmptyStmt {
+    match self {
+      Stmt::Empty(s) => s,
       _ => panic!(),
     }
   }

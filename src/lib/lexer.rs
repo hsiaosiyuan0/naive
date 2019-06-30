@@ -15,7 +15,7 @@ pub struct TokenNextNewline {
 pub struct Lexer<'a> {
   src: Source<'a>,
   tok: Rc<Token>,
-  next_is_line_terminator: bool,
+  pub next_is_line_terminator: bool,
   peeked: VecDeque<TokenNextNewline>,
 }
 

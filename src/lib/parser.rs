@@ -26,9 +26,68 @@ impl<'a> Parser<'a> {
       self.do_while()
     } else if self.ahead_is_keyword(Keyword::While) {
       self.while_stmt()
+    } else if self.ahead_is_keyword(Keyword::Continue) {
+      self.cont_stmt()
+    } else if self.ahead_is_keyword(Keyword::Break) {
+      self.break_stmt()
+    } else if self.ahead_is_keyword(Keyword::Return) {
+      self.ret_stmt()
+    } else if self.ahead_is_symbol(Symbol::Semi) {
+      self.empty_stmt()
     } else {
       self.expr_stmt()
     }
+  }
+
+  fn empty_stmt(&mut self) -> Result<Stmt, ParsingError> {
+    let mut loc = self.loc();
+    self.lexer.advance();
+    loc.end = self.pos();
+    Ok(EmptyStmt { loc }.into())
+  }
+
+  fn ret_stmt(&mut self) -> Result<Stmt, ParsingError> {
+    let loc = self.loc();
+    self.lexer.advance();
+
+    let mut ret = ReturnStmt {
+      loc,
+      argument: None,
+    };
+    if self.lexer.next_is_line_terminator {
+      if self.ahead_is_symbol(Symbol::Semi) {
+        self.lexer.advance();
+      }
+      ret.loc.end = self.pos();
+      return Ok(ret.into());
+    }
+
+    ret.argument = match self.expr(false) {
+      Ok(expr) => Some(expr),
+      Err(e) => return Err(e),
+    };
+    ret.loc.end = self.pos();
+    Ok(ret.into())
+  }
+
+  fn break_stmt(&mut self) -> Result<Stmt, ParsingError> {
+    let mut loc = self.loc();
+    self.lexer.advance();
+    loc.end = self.pos();
+    if self.ahead_is_symbol(Symbol::Semi) {
+      self.lexer.advance();
+    }
+    Ok(BreakStmt { loc }.into())
+  }
+
+  fn cont_stmt(&mut self) -> Result<Stmt, ParsingError> {
+    let mut loc = self.loc();
+    self.lexer.advance();
+    loc.end = self.pos();
+    if self.ahead_is_symbol(Symbol::Semi) {
+      self.lexer.advance();
+    }
+    Ok(ContStmt { loc }.into())
   }
 
   fn while_stmt(&mut self) -> Result<Stmt, ParsingError> {
@@ -1256,5 +1315,49 @@ mod lexer_tests {
 
     let node = parser.stmt().ok().unwrap();
     assert!(node.is_while_stmt());
+  }
+
+  #[test]
+  fn cont_ret_break_stmt() {
+    init_token_data();
+
+    let code = String::from(
+      "continue; return
+    break",
+    );
+    let src = Source::new(&code);
+    let mut lexer = Lexer::new(src);
+    let mut parser = Parser::new(&mut lexer);
+
+    let node = parser.stmt().ok().unwrap();
+    assert!(node.is_cont());
+
+    let node = parser.stmt().ok().unwrap();
+    assert!(node.is_ret());
+
+    let node = parser.stmt().ok().unwrap();
+    assert!(node.is_break());
+  }
+
+  #[test]
+  fn ret_stmt() {
+    init_token_data();
+
+    let code = String::from(
+      "return
+      1;;",
+    );
+    let src = Source::new(&code);
+    let mut lexer = Lexer::new(src);
+    let mut parser = Parser::new(&mut lexer);
+
+    let node = parser.stmt().ok().unwrap();
+    assert!(node.is_ret());
+
+    let node = parser.stmt().ok().unwrap();
+    assert!(node.is_expr());
+
+    let node = parser.stmt().ok().unwrap();
+    assert!(node.is_empty());
   }
 }
