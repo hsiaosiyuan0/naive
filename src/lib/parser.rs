@@ -36,11 +36,96 @@ impl<'a> Parser<'a> {
       self.with_stmt()
     } else if self.ahead_is_keyword(Keyword::Switch) {
       self.switch_stmt()
+    } else if self.ahead_is_keyword(Keyword::Debugger) {
+      self.debug_stmt()
+    } else if self.ahead_is_keyword(Keyword::Throw) {
+      self.throw_stmt()
+    } else if self.ahead_is_keyword(Keyword::Try) {
+      self.try_stmt()
     } else if self.ahead_is_symbol(Symbol::Semi) {
       self.empty_stmt()
     } else {
       self.expr_stmt()
     }
+  }
+
+  fn throw_stmt(&mut self) -> Result<Stmt, ParsingError> {
+    let mut loc = self.loc();
+    self.lexer.advance();
+
+    let argument = match self.expr(false) {
+      Ok(expr) => expr,
+      Err(e) => return Err(e),
+    };
+
+    loc.end = self.pos();
+    Ok(ThrowStmt { loc, argument }.into())
+  }
+
+  fn try_stmt(&mut self) -> Result<Stmt, ParsingError> {
+    let mut loc = self.loc();
+    self.lexer.advance();
+
+    let block = match self.block_stmt() {
+      Ok(stmt) => stmt,
+      Err(e) => return Err(e),
+    };
+
+    let mut handler = None;
+    let mut finalizer = None;
+    if self.ahead_is_keyword(Keyword::Catch) {
+      handler = match self.try_catch_clause() {
+        Ok(cc) => Some(cc),
+        Err(e) => return Err(e),
+      };
+    } else if self.ahead_is_keyword(Keyword::Finally) {
+      finalizer = match self.block_stmt() {
+        Ok(stmt) => Some(stmt),
+        Err(e) => return Err(e),
+      };
+    }
+
+    loc.end = self.pos();
+    let stmt = TryStmt {
+      loc,
+      block,
+      handler,
+      finalizer,
+    };
+    Ok(stmt.into())
+  }
+
+  fn try_catch_clause(&mut self) -> Result<CatchClause, ParsingError> {
+    self.lexer.advance();
+
+    match self.ahead_is_symbol(Symbol::ParenL) {
+      true => self.lexer.advance(),
+      false => return Err(ParserError::at(&self.loc()).into()),
+    };
+
+    let id = match self.primary_expr() {
+      Ok(id) => id,
+      Err(e) => return Err(e),
+    };
+
+    match self.ahead_is_symbol(Symbol::ParenR) {
+      true => self.lexer.advance(),
+      false => return Err(ParserError::at(&self.loc()).into()),
+    };
+
+    let body = match self.block_stmt() {
+      Ok(stmt) => stmt,
+      Err(e) => return Err(e),
+    };
+
+    Ok(CatchClause { id, body }.into())
+  }
+
+  fn debug_stmt(&mut self) -> Result<Stmt, ParsingError> {
+    let mut loc = self.loc();
+    self.lexer.advance();
+    loc.end = self.pos();
+    Ok(DebugStmt { loc }.into())
   }
 
   fn switch_stmt(&mut self) -> Result<Stmt, ParsingError> {
@@ -1537,5 +1622,44 @@ mod lexer_tests {
     assert_eq!(2, switch.cases.len());
     let case = &switch.cases[1];
     assert_eq!(2, case.cons.len());
+  }
+
+  #[test]
+  fn debug_stmt() {
+    init_token_data();
+
+    let code = String::from("debugger;");
+    let src = Source::new(&code);
+    let mut lexer = Lexer::new(src);
+    let mut parser = Parser::new(&mut lexer);
+
+    let node = parser.stmt().ok().unwrap();
+    assert!(node.is_debug());
+  }
+
+  #[test]
+  fn try_stmt() {
+    init_token_data();
+
+    let code = String::from("try{1}catch(e) {}");
+    let src = Source::new(&code);
+    let mut lexer = Lexer::new(src);
+    let mut parser = Parser::new(&mut lexer);
+
+    let node = parser.stmt().ok().unwrap();
+    assert!(node.is_try());
+  }
+
+  #[test]
+  fn throw_stmt() {
+    init_token_data();
+
+    let code = String::from("throw 1");
+    let src = Source::new(&code);
+    let mut lexer = Lexer::new(src);
+    let mut parser = Parser::new(&mut lexer);
+
+    let node = parser.stmt().ok().unwrap();
+    assert!(node.is_throw());
   }
 }

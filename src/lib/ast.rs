@@ -746,21 +746,21 @@ pub struct SwitchStmt {
 #[derive(Debug)]
 pub struct ThrowStmt {
   pub loc: SourceLoc,
-  pub argument: Option<Expr>,
+  pub argument: Expr,
 }
 
 #[derive(Debug)]
 pub struct CatchClause {
-  pub id: IdData,
-  pub body: BreakStmt,
+  pub id: PrimaryExpr,
+  pub body: Stmt,
 }
 
 #[derive(Debug)]
 pub struct TryStmt {
   pub loc: SourceLoc,
-  pub block: BlockStmt,
+  pub block: Stmt,
   pub handler: Option<CatchClause>,
-  pub finalizer: Option<BlockStmt>,
+  pub finalizer: Option<Stmt>,
 }
 
 #[derive(Debug)]
@@ -887,6 +887,27 @@ impl From<SwitchStmt> for Stmt {
   }
 }
 
+impl From<DebugStmt> for Stmt {
+  fn from(f: DebugStmt) -> Self {
+    let expr = Rc::new(f);
+    Stmt::Debugger(expr)
+  }
+}
+
+impl From<TryStmt> for Stmt {
+  fn from(f: TryStmt) -> Self {
+    let expr = Rc::new(f);
+    Stmt::Try(expr)
+  }
+}
+
+impl From<ThrowStmt> for Stmt {
+  fn from(f: ThrowStmt) -> Self {
+    let expr = Rc::new(f);
+    Stmt::Throw(expr)
+  }
+}
+
 impl Stmt {
   pub fn is_block(&self) -> bool {
     match self {
@@ -986,6 +1007,27 @@ impl Stmt {
     }
   }
 
+  pub fn is_debug(&self) -> bool {
+    match self {
+      Stmt::Debugger(_) => true,
+      _ => false,
+    }
+  }
+
+  pub fn is_try(&self) -> bool {
+    match self {
+      Stmt::Try(_) => true,
+      _ => false,
+    }
+  }
+
+  pub fn is_throw(&self) -> bool {
+    match self {
+      Stmt::Throw(_) => true,
+      _ => false,
+    }
+  }
+
   pub fn block(&self) -> &BlockStmt {
     match self {
       Stmt::Block(s) => s,
@@ -1080,6 +1122,27 @@ impl Stmt {
   pub fn switch_stmt(&self) -> &SwitchStmt {
     match self {
       Stmt::Switch(s) => s,
+      _ => panic!(),
+    }
+  }
+
+  pub fn debug_stmt(&self) -> &DebugStmt {
+    match self {
+      Stmt::Debugger(s) => s,
+      _ => panic!(),
+    }
+  }
+
+  pub fn try_stmt(&self) -> &TryStmt {
+    match self {
+      Stmt::Try(s) => s,
+      _ => panic!(),
+    }
+  }
+
+  pub fn throw_stmt(&self) -> &ThrowStmt {
+    match self {
+      Stmt::Throw(s) => s,
       _ => panic!(),
     }
   }
