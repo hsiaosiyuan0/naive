@@ -28,7 +28,7 @@ impl LexError {
     LexError { msg }
   }
 
-  fn default() -> Self {
+  pub fn default() -> Self {
     LexError {
       msg: "".to_string(),
     }
@@ -796,35 +796,35 @@ impl<'a> Lexer<'a> {
     }
   }
 
-  fn ahead_is_line_terminator_or_eof(&mut self) -> bool {
+  pub fn ahead_is_line_terminator_or_eof(&mut self) -> bool {
     match self.src.peek() {
       Some(c) => is_line_terminator(c),
       _ => true,
     }
   }
 
-  fn ahead_is_eof(&mut self) -> bool {
+  pub fn ahead_is_eof(&mut self) -> bool {
     match self.src.peek() {
       Some(_) => false,
       _ => true,
     }
   }
 
-  fn ahead_is_whitespace(&mut self) -> bool {
+  pub fn ahead_is_whitespace(&mut self) -> bool {
     match self.src.peek() {
       Some(c) => is_whitespace(c),
       _ => false,
     }
   }
 
-  fn ahead_is_whitespace_or_line_terminator(&mut self) -> bool {
+  pub fn ahead_is_whitespace_or_line_terminator(&mut self) -> bool {
     match self.src.peek() {
       Some(c) => c.is_whitespace(),
       _ => false,
     }
   }
 
-  fn ahead_is_whitespace_or_eof(&mut self) -> bool {
+  pub fn ahead_is_whitespace_or_eof(&mut self) -> bool {
     match self.src.peek() {
       Some(c) => is_whitespace(c),
       _ => true,

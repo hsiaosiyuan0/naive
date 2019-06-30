@@ -13,6 +13,20 @@ impl<'a> Parser<'a> {
     Parser { lexer }
   }
 
+  pub fn prog(&mut self) -> Result<Prog, ParsingError> {
+    let mut body = vec![];
+    loop {
+      if self.lexer.ahead_is_eof() {
+        break;
+      }
+      match self.stmt() {
+        Ok(stmt) => body.push(stmt),
+        Err(e) => return Err(e),
+      }
+    }
+    Ok(Prog { body })
+  }
+
   fn stmt(&mut self) -> Result<Stmt, ParsingError> {
     if self.ahead_is_symbol(Symbol::BraceL) {
       self.block_stmt()
@@ -1772,5 +1786,23 @@ mod parser_tests {
     let call = node.expr().expr.call_expr();
     let callee = call.callee.primary().paren().value.primary();
     assert!(callee.is_fn());
+  }
+
+  #[test]
+  fn prog() {
+    init_token_data();
+
+    let code = String::from(
+      "function f() {}
+    var a, b
+    a + b
+    ",
+    );
+    let src = Source::new(&code);
+    let mut lexer = Lexer::new(src);
+    let mut parser = Parser::new(&mut lexer);
+
+    let node = parser.prog().ok().unwrap();
+    assert_eq!(3, node.body.len());
   }
 }

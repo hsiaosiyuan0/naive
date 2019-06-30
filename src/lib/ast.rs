@@ -1216,3 +1216,8 @@ impl Stmt {
     }
   }
 }
+
+#[derive(Debug)]
+pub struct Prog {
+  pub body: Vec<Stmt>,
+}
