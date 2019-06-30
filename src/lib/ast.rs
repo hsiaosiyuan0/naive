@@ -123,6 +123,14 @@ impl From<NumericData> for Literal {
 }
 
 #[derive(Debug)]
+pub struct FnDec {
+  pub loc: SourceLoc,
+  pub id: Option<PrimaryExpr>,
+  pub params: Vec<PrimaryExpr>,
+  pub body: Stmt,
+}
+
+#[derive(Debug)]
 pub enum PrimaryExpr {
   This(ThisExprData),
   Identifier(IdData),
@@ -130,6 +138,7 @@ pub enum PrimaryExpr {
   ArrayLiteral(ArrayData),
   ObjectLiteral(ObjectData),
   Parenthesized(ParenData),
+  Function(Rc<FnDec>),
 }
 
 impl PrimaryExpr {
@@ -175,6 +184,13 @@ impl PrimaryExpr {
     }
   }
 
+  pub fn is_fn(&self) -> bool {
+    match self {
+      PrimaryExpr::Function(_) => true,
+      _ => false,
+    }
+  }
+
   pub fn this(&self) -> &ThisExprData {
     match self {
       PrimaryExpr::This(d) => d,
@@ -214,6 +230,25 @@ impl PrimaryExpr {
     match self {
       PrimaryExpr::Identifier(d) => d,
       _ => panic!(),
+    }
+  }
+
+  pub fn fn_expr(&self) -> &Rc<FnDec> {
+    match self {
+      PrimaryExpr::Function(expr) => expr,
+      _ => panic!(),
+    }
+  }
+
+  pub fn loc(&self) -> &SourceLoc {
+    match self {
+      PrimaryExpr::This(d) => &d.loc,
+      PrimaryExpr::Identifier(d) => &d.loc,
+      PrimaryExpr::Literal(d) => &d.loc(),
+      PrimaryExpr::ArrayLiteral(d) => &d.loc,
+      PrimaryExpr::ObjectLiteral(d) => &d.loc,
+      PrimaryExpr::Parenthesized(d) => &d.loc,
+      PrimaryExpr::Function(d) => &d.loc,
     }
   }
 }
@@ -274,6 +309,19 @@ impl From<NumericData> for PrimaryExpr {
 impl From<ArrayData> for PrimaryExpr {
   fn from(f: ArrayData) -> Self {
     PrimaryExpr::ArrayLiteral(f)
+  }
+}
+
+impl From<FnDec> for PrimaryExpr {
+  fn from(f: FnDec) -> Self {
+    let expr = Rc::new(f);
+    PrimaryExpr::Function(expr)
+  }
+}
+
+impl From<ParenData> for PrimaryExpr {
+  fn from(f: ParenData) -> Self {
+    PrimaryExpr::Parenthesized(f)
   }
 }
 
@@ -340,7 +388,6 @@ pub struct SeqExpr {
 #[derive(Debug)]
 pub enum Expr {
   Primary(Rc<PrimaryExpr>),
-  Function,
   Member(Rc<MemberExpr>),
   New(Rc<NewExpr>),
   Call(Rc<CallExpr>),
@@ -787,6 +834,7 @@ pub enum Stmt {
   Throw(Rc<ThrowStmt>),
   Try(Rc<TryStmt>),
   Debugger(Rc<DebugStmt>),
+  Function(Rc<FnDec>),
 }
 
 impl From<BlockStmt> for Stmt {
@@ -905,6 +953,13 @@ impl From<ThrowStmt> for Stmt {
   fn from(f: ThrowStmt) -> Self {
     let expr = Rc::new(f);
     Stmt::Throw(expr)
+  }
+}
+
+impl From<FnDec> for Stmt {
+  fn from(f: FnDec) -> Self {
+    let expr = Rc::new(f);
+    Stmt::Function(expr)
   }
 }
 
@@ -1028,6 +1083,13 @@ impl Stmt {
     }
   }
 
+  pub fn is_fn(&self) -> bool {
+    match self {
+      Stmt::Function(_) => true,
+      _ => false,
+    }
+  }
+
   pub fn block(&self) -> &BlockStmt {
     match self {
       Stmt::Block(s) => s,
@@ -1143,6 +1205,13 @@ impl Stmt {
   pub fn throw_stmt(&self) -> &ThrowStmt {
     match self {
       Stmt::Throw(s) => s,
+      _ => panic!(),
+    }
+  }
+
+  pub fn fn_dec(&self) -> &FnDec {
+    match self {
+      Stmt::Function(s) => s,
       _ => panic!(),
     }
   }

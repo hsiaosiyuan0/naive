@@ -42,11 +42,24 @@ impl<'a> Parser<'a> {
       self.throw_stmt()
     } else if self.ahead_is_keyword(Keyword::Try) {
       self.try_stmt()
+    } else if self.ahead_is_keyword(Keyword::Function) {
+      self.fn_dec_stmt()
     } else if self.ahead_is_symbol(Symbol::Semi) {
       self.empty_stmt()
     } else {
       self.expr_stmt()
     }
+  }
+
+  fn fn_dec_stmt(&mut self) -> Result<Stmt, ParsingError> {
+    let tok = self.lexer.next().ok().unwrap();
+    let expr = match self.fn_expr(&tok) {
+      Ok(expr) => expr,
+      Err(e) => return Err(e),
+    };
+
+    let fun = expr.fn_expr().clone();
+    Ok(Stmt::Function(fun))
   }
 
   fn throw_stmt(&mut self) -> Result<Stmt, ParsingError> {
@@ -288,10 +301,17 @@ impl<'a> Parser<'a> {
       return Ok(ret.into());
     }
 
-    ret.argument = match self.expr(false) {
-      Ok(expr) => Some(expr),
-      Err(e) => return Err(e),
-    };
+    if !self.ahead_is_symbol(Symbol::BraceR) {
+      if self.ahead_is_symbol(Symbol::Semi) {
+        self.lexer.advance();
+      } else {
+        ret.argument = match self.expr(false) {
+          Ok(expr) => Some(expr),
+          Err(e) => return Err(e),
+        };
+      }
+    }
+
     ret.loc.end = self.pos();
     Ok(ret.into())
   }
@@ -1051,12 +1071,86 @@ impl<'a> Parser<'a> {
           Ok(NumericData::new(loc, tok.num_data().value.clone()).into())
         } else if tok.is_symbol_kind(Symbol::BracketL) {
           self.array_literal(&tok)
+        } else if tok.is_symbol_kind(Symbol::ParenL) {
+          self.paren_expr(&tok)
+        } else if tok.is_keyword_kind(Keyword::Function) {
+          self.fn_expr(&tok)
         } else {
           Err(ParserError::at_tok(&tok).into())
         }
       }
       Err(e) => Err(e.into()),
     }
+  }
+
+  fn paren_expr(&mut self, open: &Token) -> Result<PrimaryExpr, ParsingError> {
+    let mut loc = open.loc().to_owned();
+    let value = match self.expr(false) {
+      Ok(expr) => expr,
+      Err(e) => return Err(e),
+    };
+    match self.ahead_is_symbol(Symbol::ParenR) {
+      true => self.lexer.advance(),
+      false => return Err(ParserError::at(&self.loc()).into()),
+    }
+    loc.end = self.pos();
+    Ok(ParenData { loc, value }.into())
+  }
+
+  fn fn_expr(&mut self, open: &Token) -> Result<PrimaryExpr, ParsingError> {
+    let mut loc = open.loc().to_owned();
+
+    let mut id = None;
+    if !self.ahead_is_symbol(Symbol::ParenL) {
+      id = match self.primary_expr() {
+        Ok(expr) => {
+          if !expr.is_id() {
+            return Err(ParserError::at(expr.loc()).into());
+          }
+          Some(expr)
+        }
+        Err(e) => return Err(e),
+      }
+    }
+
+    match self.ahead_is_symbol(Symbol::ParenL) {
+      true => self.lexer.advance(),
+      false => return Err(ParserError::at(&self.loc()).into()),
+    }
+
+    let mut params = vec![];
+    loop {
+      if self.ahead_is_symbol(Symbol::ParenR) {
+        self.lexer.advance();
+        break;
+      }
+      match self.primary_expr() {
+        Ok(e) => {
+          if !e.is_id() {
+            return Err(ParserError::at(e.loc()).into());
+          }
+          params.push(e);
+        }
+        Err(e) => return Err(e),
+      }
+      if self.ahead_is_symbol(Symbol::Comma) {
+        self.lexer.advance();
+      }
+    }
+
+    loc.end = self.pos();
+    let body = match self.block_stmt() {
+      Ok(stmt) => stmt,
+      Err(e) => return Err(e),
+    };
+
+    let dec = FnDec {
+      loc,
+      id,
+      params,
+      body,
+    };
+    Ok(dec.into())
   }
 
   fn array_literal(&mut self, open: &Token) -> Result<PrimaryExpr, ParsingError> {
@@ -1147,7 +1241,7 @@ impl From<LexError> for ParsingError {
 }
 
 #[cfg(test)]
-mod lexer_tests {
+mod parser_tests {
   use super::*;
   use crate::source::*;
 
@@ -1661,5 +1755,22 @@ mod lexer_tests {
 
     let node = parser.stmt().ok().unwrap();
     assert!(node.is_throw());
+  }
+
+  #[test]
+  fn fn_expr() {
+    init_token_data();
+
+    let code = String::from("(function f(a,b,c) {return 1;})()");
+    let src = Source::new(&code);
+    let mut lexer = Lexer::new(src);
+    let mut parser = Parser::new(&mut lexer);
+
+    let node = parser.stmt().ok().unwrap();
+    assert!(node.is_expr());
+
+    let call = node.expr().expr.call_expr();
+    let callee = call.callee.primary().paren().value.primary();
+    assert!(callee.is_fn());
   }
 }
