@@ -12,3 +12,4 @@ path = "src/lib/mod.rs"
 unic-ucd = "0.9.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.8"
+libc = "0.2"
