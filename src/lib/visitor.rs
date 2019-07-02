@@ -45,6 +45,20 @@ pub trait AstVisitor<T, E> {
   fn debug_stmt(&mut self, stmt: &DebugStmt) -> Result<T, E>;
   fn fn_stmt(&mut self, stmt: &FnDec) -> Result<T, E>;
 
+  fn expr(&mut self, expr: &Expr) -> Result<T, E> {
+    match expr {
+      Expr::Primary(ex) => self.primary_expr(ex),
+      Expr::Member(ex) => self.member_expr(ex),
+      Expr::New(ex) => self.new_expr(ex),
+      Expr::Call(ex) => self.call_expr(ex),
+      Expr::Unary(ex) => self.unary_expr(ex),
+      Expr::Binary(ex) => self.binary_expr(ex),
+      Expr::Assignment(ex) => self.assign_expr(ex),
+      Expr::Conditional(ex) => self.cond_expr(ex),
+      Expr::Sequence(ex) => self.seq_expr(ex),
+    }
+  }
+
   fn member_expr(&mut self, expr: &MemberExpr) -> Result<T, E>;
   fn new_expr(&mut self, expr: &NewExpr) -> Result<T, E>;
   fn call_expr(&mut self, expr: &CallExpr) -> Result<T, E>;
