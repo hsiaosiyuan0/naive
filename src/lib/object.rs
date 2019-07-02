@@ -39,29 +39,30 @@ impl RefCounting {
   pub fn x_release(ptr: *mut JSObject) {
     let rc = RefCounting::ref_cnt(ptr);
     assert!(rc >= 0);
-    if rc == 0 {
-      let obj = unsafe { Box::from_raw(ptr) };
-      let typ = obj.typ;
-      Box::into_raw(obj);
-      match typ {
-        JSObjectType::Array => {
-          let arr = unsafe { Box::from_raw(ptr as *mut JSArray) };
-          for item in &arr.a {
-            RefCounting::dec(*item)
-          }
-          Box::into_raw(arr);
-        }
-        JSObjectType::Dict => {
-          let dict = unsafe { Box::from_raw(ptr as *mut JSDict) };
-          for (_, v) in &dict.d {
-            RefCounting::dec(*v);
-          }
-          Box::into_raw(dict);
-        }
-        _ => (),
-      };
-      unsafe { drop(Box::from_raw(ptr)) }
+    if rc > 0 {
+      return;
     }
+    let obj = unsafe { Box::from_raw(ptr) };
+    let typ = obj.typ;
+    Box::into_raw(obj);
+    match typ {
+      JSObjectType::Array => {
+        let arr = unsafe { Box::from_raw(ptr as *mut JSArray) };
+        for item in &arr.a {
+          RefCounting::dec(*item)
+        }
+        Box::into_raw(arr);
+      }
+      JSObjectType::Dict => {
+        let dict = unsafe { Box::from_raw(ptr as *mut JSDict) };
+        for (_, v) in &dict.d {
+          RefCounting::dec(*v);
+        }
+        Box::into_raw(dict);
+      }
+      _ => (),
+    };
+    unsafe { drop(Box::from_raw(ptr)) }
   }
 }
 
@@ -197,13 +198,18 @@ impl JSDict {
   }
 
   pub fn del(map: *mut JSDict, k: &str) -> *mut JSObject {
-    let v = JSDict::get(map, k);
+    let mut dict = unsafe { Box::from_raw(map) };
     unsafe {
-      if v != JS_UNDEF {
-        RefCounting::dec(v);
-      }
+      let v = match dict.d.remove(k) {
+        Some(v) => {
+          RefCounting::dec(v);
+          v
+        }
+        None => JS_UNDEF,
+      };
+      Box::into_raw(dict);
+      v
     }
-    v
   }
 }
 
@@ -329,5 +335,13 @@ mod object_tests {
 
     JSDict::del(dict_ptr, "test");
     assert_eq!(1, RefCounting::ref_cnt(s_ptr as *mut JSObject));
+
+    unsafe {
+      assert_eq!(JS_UNDEF, JSDict::get(dict_ptr, "test"));
+    }
+
+    unsafe {
+      assert_eq!(JS_UNDEF, JSDict::get(dict_ptr, "test"));
+    }
   }
 }
