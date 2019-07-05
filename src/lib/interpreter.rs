@@ -5,8 +5,11 @@ use crate::parser::*;
 use crate::token::*;
 use crate::visitor::AstVisitor;
 use std::collections::{HashMap, HashSet};
+use std::ffi::CStr;
 use std::ops::Deref;
+use std::os::raw::c_char;
 use std::ptr::{drop_in_place, null_mut};
+use std::str;
 
 pub struct Interpreter<'a> {
   ctx: &'a mut Context,
@@ -250,19 +253,19 @@ impl Context {
       outer: null_mut(),
       vals: HashSet::new(),
     });
-    let scope_ptr = Box::into_raw(scope);
-    scope = unsafe { Box::from_raw(scope_ptr) };
+    let scope_ptr = unbox(scope);
+    scope = box_it(scope_ptr);
 
     let mut ctx = Box::new(Context {
       local_scope: null_mut(),
       scope,
     });
-    let ctx_ptr = Box::into_raw(ctx);
-    ctx = unsafe { Box::from_raw(ctx_ptr) };
+    let ctx_ptr = unbox(ctx);
+    ctx = box_it(ctx_ptr);
 
-    scope = unsafe { Box::from_raw(scope_ptr) };
+    scope = box_it(scope_ptr);
     scope.ctx = ctx_ptr;
-    Box::into_raw(scope);
+    unbox(scope);
 
     ctx.local_scope = scope_ptr;
     ctx
@@ -282,23 +285,23 @@ impl LocalScope {
       outer: ctx.local_scope,
       vals: HashSet::new(),
     });
-    ctx.local_scope = Box::into_raw(pool);
-    unsafe { Box::from_raw(ctx.local_scope) }
+    ctx.local_scope = unbox(pool);
+    box_it(ctx.local_scope)
   }
 
   pub fn reg<T>(scope: LocalScopePtr, val: *mut T) -> *mut T {
-    let mut scope = unsafe { Box::from_raw(scope) };
+    let mut scope = box_it(scope);
     let v = val as JSObjPtr;
     scope.vals.insert(v);
-    Box::into_raw(scope);
+    unbox(scope);
     val
   }
 
   pub fn del<T>(scope: LocalScopePtr, val: *mut T) {
-    let mut scope = unsafe { Box::from_raw(scope) };
+    let mut scope = box_it(scope);
     let v = val as JSObjPtr;
     scope.vals.remove(&v);
-    Box::into_raw(scope);
+    unbox(scope);
   }
 
   pub fn close(&self, v: JSObjPtr) {
@@ -309,9 +312,9 @@ impl LocalScope {
 
 impl Drop for LocalScope {
   fn drop(&mut self) {
-    let mut ctx = unsafe { Box::from_raw(self.ctx) };
+    let mut ctx = box_it(self.ctx);
     ctx.local_scope = self.outer;
-    Box::into_raw(ctx);
+    unbox(ctx);
     for val in &self.vals {
       RefCounting::dec(*val);
     }
@@ -320,27 +323,95 @@ impl Drop for LocalScope {
 }
 
 impl JSObject {
-  pub fn is_type(ptr: JSObjPtr, typ: JSObjectType) -> bool {
-    let obj = unsafe { Box::from_raw(ptr) };
+  pub fn typ<T>(ptr: *mut T) -> JSObjectType {
+    let obj = box_as::<T, JSObject>(ptr);
+    let t = obj.typ;
+    Box::into_raw(obj);
+    t
+  }
+
+  pub fn is_type<T>(ptr: *mut T, typ: JSObjectType) -> bool {
+    let obj = box_as::<T, JSObject>(ptr);
     let t = obj.typ;
     Box::into_raw(obj);
     t == typ
   }
 
-  pub fn is_str(ptr: JSObjPtr) -> bool {
+  pub fn is_undef<T>(ptr: *mut T) -> bool {
+    JSObject::is_type(ptr, JSObjectType::Undefined)
+  }
+  pub fn is_null<T>(ptr: *mut T) -> bool {
+    JSObject::is_type(ptr, JSObjectType::Null)
+  }
+  pub fn is_bool<T>(ptr: *mut T) -> bool {
+    JSObject::is_type(ptr, JSObjectType::Boolean)
+  }
+  pub fn is_num<T>(ptr: *mut T) -> bool {
+    JSObject::is_type(ptr, JSObjectType::Number)
+  }
+  pub fn is_str<T>(ptr: *mut T) -> bool {
     JSObject::is_type(ptr, JSObjectType::String)
   }
+  pub fn is_dict<T>(ptr: *mut T) -> bool {
+    JSObject::is_type(ptr, JSObjectType::Dict)
+  }
 
+  // TODO:: cvt
   pub fn add(lhs: JSObjPtr, rhs: JSObjPtr, scope: LocalScopePtr) -> JSObjPtr {
     let lv = JSNumber::val(lhs as JSNumPtr);
     let rv = JSNumber::val(rhs as JSNumPtr);
     JSNumber::from_f64(lv + rv, scope) as JSObjPtr
   }
 
+  // TODO:: cvt
   pub fn mul(lhs: JSObjPtr, rhs: JSObjPtr, scope: LocalScopePtr) -> JSObjPtr {
     let lv = JSNumber::val(lhs as JSNumPtr);
     let rv = JSNumber::val(rhs as JSNumPtr);
     JSNumber::from_f64(lv * rv, scope) as JSObjPtr
+  }
+
+  pub fn cvt_to_num<T>(obj: *mut T, scope: LocalScopePtr) -> JSNumPtr {
+    match JSObject::typ(obj) {
+      JSObjectType::Undefined | JSObjectType::Nan => js_nan() as JSNumPtr,
+      JSObjectType::Null => JSNumber::from_f64(0.0, scope) as JSNumPtr,
+      JSObjectType::Boolean => {
+        if JSBoolean::is_true(obj) {
+          JSNumber::from_f64(1.0, scope)
+        } else {
+          JSNumber::from_f64(0.0, scope)
+        }
+      }
+      JSObjectType::Number => obj as JSNumPtr,
+      JSObjectType::String => JSNumber::from_js_str(obj, scope),
+      // TODO: toString on objects
+      JSObjectType::Array | JSObjectType::Dict => js_nan() as JSNumPtr,
+    }
+  }
+
+  pub fn cvt_to_prim<T>(obj: *mut T, scope: LocalScopePtr) -> JSObjPtr {
+    match JSObject::typ(obj) {
+      JSObjectType::Undefined
+      | JSObjectType::Nan
+      | JSObjectType::Null
+      | JSObjectType::Boolean
+      | JSObjectType::Number
+      | JSObjectType::String => obj as JSObjPtr,
+      // TODO: DefaultValue on objects
+      JSObjectType::Array | JSObjectType::Dict => js_null() as JSObjPtr,
+    }
+  }
+
+  pub fn cvt_to_bool<T>(obj: *mut T, scope: LocalScopePtr) -> JSBoolPtr {
+    match JSObject::typ(obj) {
+      JSObjectType::Undefined | JSObjectType::Nan | JSObjectType::Null => {
+        JSBoolean::new(false, scope)
+      }
+      JSObjectType::Boolean => obj as JSBoolPtr,
+      JSObjectType::Number => JSBoolean::new(JSNumber::is_zero(obj), scope),
+      JSObjectType::String => JSBoolean::new(JSString::is_empty(obj), scope),
+      // TODO: toString on objects
+      JSObjectType::Array | JSObjectType::Dict => JSBoolean::new(false, scope),
+    }
   }
 }
 
@@ -355,15 +426,36 @@ impl JSString {
     }));
     LocalScope::reg(scope, ptr)
   }
+
+  pub fn val<T>(s: *mut T) -> *const u8 {
+    let s = box_as::<T, JSString>(s);
+    let v = s.s.as_str().as_ptr();
+    unbox(s);
+    v
+  }
+
+  pub fn is_empty<T>(s: *mut T) -> bool {
+    let s = box_as::<T, JSString>(s);
+    let r = s.s.is_empty();
+    unbox(s);
+    r
+  }
+}
+
+fn is_int(f: f64) -> bool {
+  f.floor() == f
 }
 
 impl JSNumber {
-  pub fn is_int(f: f64) -> bool {
-    f.floor() == f
+  pub fn is_int<T>(n: *mut T) -> bool {
+    let n = box_as::<T, JSNumber>(n);
+    let b = n.i;
+    unbox(n);
+    b
   }
 
   pub fn from_f64(v: f64, scope: LocalScopePtr) -> JSNumPtr {
-    let (i, f) = match JSNumber::is_int(v) {
+    let (i, f) = match is_int(v) {
       true => (true, v),
       false => (false, v),
     };
@@ -383,17 +475,30 @@ impl JSNumber {
     JSNumber::from_f64(v, scope)
   }
 
-  pub fn val(n: JSNumPtr) -> f64 {
-    let n = unsafe { Box::from_raw(n) };
+  pub fn from_js_str<T>(s: *mut T, scope: LocalScopePtr) -> JSNumPtr {
+    let s = JSString::val(s as JSStrPtr);
+    let s = unsafe { CStr::from_ptr(s as *const c_char).to_str().unwrap() };
+    JSNumber::from_str(s, scope)
+  }
+
+  pub fn val<T>(n: *mut T) -> f64 {
+    let n = box_as::<T, JSNumber>(n);
     let v = n.f;
-    Box::into_raw(n);
+    unbox(n);
     v
   }
 
-  pub fn eq(a: JSNumPtr, b: JSNumPtr) -> bool {
+  pub fn eq<T>(a: *mut T, b: *mut T) -> bool {
     let a = JSNumber::val(a);
     let b = JSNumber::val(b);
     a == b
+  }
+
+  pub fn is_zero<T>(n: *mut T) -> bool {
+    let n = box_as::<T, JSNumber>(n);
+    let v = n.f;
+    unbox(n);
+    v == 0.0
   }
 }
 
@@ -412,6 +517,17 @@ impl JSBoolean {
   pub fn from_str(s: &str, scope: LocalScopePtr) -> JSBoolPtr {
     JSBoolean::new(s == "true", scope)
   }
+
+  pub fn is_true<T>(ptr: *mut T) -> bool {
+    let v = box_as::<T, JSBoolean>(ptr);
+    let r = v.v;
+    unbox(v);
+    r
+  }
+
+  pub fn is_false<T>(ptr: *mut T) -> bool {
+    !JSBoolean::is_true(ptr)
+  }
 }
 
 impl JSArray {
@@ -426,43 +542,41 @@ impl JSArray {
     LocalScope::reg(scope, ptr)
   }
 
-  pub fn push<T>(arr: JSArrPtr, item: *mut T) {
+  pub fn push<A, T>(arr: *mut A, item: *mut T) {
     let item = item as JSObjPtr;
-    let mut arr = unsafe { Box::from_raw(arr) };
+    let mut arr = box_as::<A, JSArray>(arr);
     arr.a.push(item);
     RefCounting::inc(item);
-    Box::into_raw(arr);
+    unbox(arr);
   }
 
-  pub fn pop(arr: JSArrPtr) -> JSObjPtr {
-    let mut arr = unsafe { Box::from_raw(arr) };
-    unsafe {
-      let ret = match arr.a.pop() {
-        Some(ptr) => {
-          RefCounting::dec(ptr);
-          ptr
-        }
-        None => JS_UNDEF,
-      };
-      Box::into_raw(arr);
-      ret
-    }
-  }
-
-  pub fn len(arr: JSArrPtr) -> usize {
-    let mut arr = unsafe { Box::from_raw(arr) };
-    let ret = arr.a.len();
-    Box::into_raw(arr);
+  pub fn pop<T>(arr: *mut T) -> JSObjPtr {
+    let mut arr = box_as::<T, JSArray>(arr);
+    let ret = match arr.a.pop() {
+      Some(ptr) => {
+        RefCounting::dec(ptr);
+        ptr
+      }
+      None => js_undef(),
+    };
+    unbox(arr);
     ret
   }
 
-  pub fn idx(arr: JSArrPtr, i: usize) -> JSObjPtr {
-    let mut arr = unsafe { Box::from_raw(arr) };
+  pub fn len<T>(arr: *mut T) -> usize {
+    let mut arr = box_as::<T, JSArray>(arr);
+    let ret = arr.a.len();
+    unbox(arr);
+    ret
+  }
+
+  pub fn idx<T>(arr: *mut T, i: usize) -> JSObjPtr {
+    let mut arr = box_as::<T, JSArray>(arr);
     let v = match arr.a.get(i) {
       Some(ptr) => *ptr,
       None => null_mut(),
     };
-    Box::into_raw(arr);
+    unbox(arr);
     v
   }
 }
@@ -479,39 +593,35 @@ impl JSDict {
     LocalScope::reg(scope, ptr)
   }
 
-  pub fn set<T>(map: JSDictPtr, k: &str, v: *mut T) {
-    let mut dict = unsafe { Box::from_raw(map) };
+  pub fn set<D, T>(map: *mut D, k: &str, v: *mut T) {
+    let mut dict = box_as::<D, JSDict>(map);
     let ptr = v as JSObjPtr;
     dict.d.insert(k.to_owned(), ptr);
     RefCounting::inc(v);
-    Box::into_raw(dict);
+    unbox(dict);
   }
 
-  pub fn get(map: JSDictPtr, k: &str) -> JSObjPtr {
-    let dict = unsafe { Box::from_raw(map) };
-    unsafe {
-      let ret = match dict.d.get(k) {
-        Some(v) => *v,
-        None => JS_UNDEF,
-      };
-      Box::into_raw(dict);
-      ret
-    }
+  pub fn get<T>(map: *mut T, k: &str) -> JSObjPtr {
+    let dict = box_as::<T, JSDict>(map);
+    let ret = match dict.d.get(k) {
+      Some(v) => *v,
+      None => js_undef(),
+    };
+    unbox(dict);
+    ret
   }
 
-  pub fn del(map: JSDictPtr, k: &str) -> JSObjPtr {
-    let mut dict = unsafe { Box::from_raw(map) };
-    unsafe {
-      let v = match dict.d.remove(k) {
-        Some(v) => {
-          RefCounting::dec(v);
-          v
-        }
-        None => JS_UNDEF,
-      };
-      Box::into_raw(dict);
-      v
-    }
+  pub fn del<T>(map: *mut T, k: &str) -> JSObjPtr {
+    let mut dict = box_as::<T, JSDict>(map);;
+    let v = match dict.d.remove(k) {
+      Some(v) => {
+        RefCounting::dec(v);
+        v
+      }
+      None => js_undef(),
+    };
+    unbox(dict);
+    v
   }
 }
 
@@ -597,12 +707,29 @@ mod interp_tests {
     let mut interp = Interpreter { ctx: &mut ctx };
     let node = parser.prog().ok().unwrap();
     let arr = interp.prog(&node).ok().unwrap().unwrap();
-    JSObject::dump(arr);
 
     let arr_ptr = arr as JSArrPtr;
     assert!(JSNumber::eq(
       JSArray::idx(arr_ptr, 0) as JSNumPtr,
       JSArray::idx(arr_ptr, 1) as JSNumPtr
     ));
+  }
+
+  #[test]
+  fn num_test() {
+    init_token_data();
+
+    let mut ctx = Context::new();
+    let num = JSNumber::from_str("-0", ctx.local_scope);
+    assert!(JSNumber::is_zero(num));
+  }
+
+  #[test]
+  fn str_test() {
+    init_token_data();
+
+    let mut ctx = Context::new();
+    let str = JSString::new("", ctx.local_scope);
+    assert!(JSString::is_empty(str));
   }
 }

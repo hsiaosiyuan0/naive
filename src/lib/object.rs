@@ -12,6 +12,7 @@ pub enum JSObjectType {
   Dict,
   Null,
   Undefined,
+  Nan,
 }
 
 pub struct RefCounting {}
@@ -24,58 +25,75 @@ pub type JSArrPtr = *mut JSArray;
 pub type JSDictPtr = *mut JSDict;
 pub type JSNullPtr = *mut JSNull;
 pub type JSUndefPtr = *mut JSUndefined;
+pub type JSNanPtr = *mut JSNan;
+
+pub fn box_it<T>(ptr: *mut T) -> Box<T> {
+  unsafe { Box::from_raw(ptr) }
+}
+
+pub fn box_as<F, T>(ptr: *mut F) -> Box<T> {
+  unsafe { Box::from_raw(ptr as *mut T) }
+}
+
+pub fn unbox<T>(b: Box<T>) -> *mut T {
+  Box::into_raw(b)
+}
 
 impl RefCounting {
   pub fn ref_cnt<T>(ptr: *mut T) -> i32 {
-    let ptr = ptr as JSObjPtr;
-    let obj = unsafe { Box::from_raw(ptr) };
+    let obj = box_as::<T, JSObject>(ptr);
     let rc = obj.ref_cnt;
-    Box::into_raw(obj);
+    unbox(obj);
     rc
   }
 
   pub fn inc<T>(ptr: *mut T) {
-    let ptr = ptr as JSObjPtr;
-    let mut obj = unsafe { Box::from_raw(ptr) };
+    let mut obj = box_as::<T, JSObject>(ptr);
     obj.ref_cnt += 1;
-    Box::into_raw(obj);
+    unbox(obj);
   }
 
   pub fn dec<T>(ptr: *mut T) {
-    let ptr = ptr as JSObjPtr;
-    let mut obj = unsafe { Box::from_raw(ptr) };
+    let mut obj = box_as::<T, JSObject>(ptr);
     obj.ref_cnt -= 1;
-    RefCounting::x_release(Box::into_raw(obj));
+    RefCounting::x_release(unbox(obj));
   }
 
-  pub fn x_release(ptr: JSObjPtr) {
+  pub fn x_release<T>(ptr: *mut T) {
+    JSObject::dump(ptr);
     let rc = RefCounting::ref_cnt(ptr);
     assert!(rc >= 0);
     if rc > 0 {
       return;
     }
-    let obj = unsafe { Box::from_raw(ptr) };
+
+    let obj = box_as::<T, JSObject>(ptr);
     let typ = obj.typ;
-    Box::into_raw(obj);
+    unbox(obj);
     match typ {
+      JSObjectType::String => {
+        let s = box_as::<T, JSString>(ptr);
+      }
+      JSObjectType::Number => {
+        let n = box_as::<T, JSNumber>(ptr);
+      }
+      JSObjectType::Boolean => {
+        let b = box_as::<T, JSBoolean>(ptr);
+      }
       JSObjectType::Array => {
-        let arr = unsafe { Box::from_raw(ptr as JSArrPtr) };
+        let arr = box_as::<T, JSArray>(ptr);
         for item in &arr.a {
-          RefCounting::dec(*item)
+          RefCounting::dec(*item);
         }
-        Box::into_raw(arr);
       }
       JSObjectType::Dict => {
-        let dict = unsafe { Box::from_raw(ptr as JSDictPtr) };
+        let dict = box_as::<T, JSDict>(ptr);
         for (_, v) in &dict.d {
           RefCounting::dec(*v);
         }
-        Box::into_raw(dict);
       }
       _ => (),
     };
-    JSObject::dump(ptr);
-    unsafe { drop(Box::from_raw(ptr)) }
   }
 }
 
@@ -134,8 +152,15 @@ pub struct JSUndefined {
   pub base: JSObject,
 }
 
+#[repr(C)]
+#[derive(Debug)]
+pub struct JSNan {
+  pub base: JSObject,
+}
+
 pub static mut JS_NULL: JSObjPtr = null_mut();
 pub static mut JS_UNDEF: JSObjPtr = null_mut();
+pub static mut JS_NAN: JSObjPtr = null_mut();
 
 pub fn js_null() -> JSObjPtr {
   unsafe { JS_NULL }
@@ -143,6 +168,10 @@ pub fn js_null() -> JSObjPtr {
 
 pub fn js_undef() -> JSObjPtr {
   unsafe { JS_UNDEF }
+}
+
+pub fn js_nan() -> JSObjPtr {
+  unsafe { JS_NAN }
 }
 
 static INIT_JS_NULL_UNDEF_ONCE: Once = Once::new();
@@ -163,50 +192,62 @@ pub fn init_js_null_undef() {
       },
     }));
     JS_UNDEF = ptr as JSObjPtr;
+
+    let ptr = Box::into_raw(Box::new(JSNan {
+      base: JSObject {
+        ref_cnt: 1,
+        typ: JSObjectType::Nan,
+      },
+    }));
+    JS_NAN = ptr as JSObjPtr;
   });
 }
 
 impl JSObject {
   pub fn dump<T>(ptr: *mut T) {
-    let ptr = ptr as JSObjPtr;
-    let obj = unsafe { Box::from_raw(ptr) };
+    let obj = box_as::<T, JSObject>(ptr);
     let typ = obj.typ;
-    Box::into_raw(obj);
+    unbox(obj);
     match typ {
       JSObjectType::String => {
-        let obj = unsafe { Box::from_raw(ptr as JSStrPtr) };
+        let obj = box_as::<T, JSString>(ptr);
         println!("{:#?}", &obj);
-        Box::into_raw(obj);
+        unbox(obj);
       }
       JSObjectType::Number => {
-        let obj = unsafe { Box::from_raw(ptr as JSNumPtr) };
+        let obj = box_as::<T, JSNumber>(ptr);
         println!("{:#?}", &obj);
-        Box::into_raw(obj);
+        unbox(obj);
       }
       JSObjectType::Boolean => {
-        let obj = unsafe { Box::from_raw(ptr as JSBoolPtr) };
+        let obj = box_as::<T, JSBoolean>(ptr);
         println!("{:#?}", &obj);
-        Box::into_raw(obj);
+        unbox(obj);
       }
       JSObjectType::Array => {
-        let obj = unsafe { Box::from_raw(ptr as JSArrPtr) };
+        let obj = box_as::<T, JSArray>(ptr);
         println!("{:#?}", &obj);
-        Box::into_raw(obj);
+        unbox(obj);
       }
       JSObjectType::Dict => {
-        let obj = unsafe { Box::from_raw(ptr as JSDictPtr) };
+        let obj = box_as::<T, JSDict>(ptr);
         println!("{:#?}", &obj);
-        Box::into_raw(obj);
+        unbox(obj);
       }
       JSObjectType::Null => {
-        let obj = unsafe { Box::from_raw(ptr as JSNullPtr) };
+        let obj = box_as::<T, JSNull>(ptr);
         println!("{:#?}", &obj);
-        Box::into_raw(obj);
+        unbox(obj);
       }
       JSObjectType::Undefined => {
-        let obj = unsafe { Box::from_raw(ptr as JSUndefPtr) };
+        let obj = box_as::<T, JSUndefined>(ptr);
         println!("{:#?}", &obj);
-        Box::into_raw(obj);
+        unbox(obj);
+      }
+      JSObjectType::Nan => {
+        let obj = box_as::<T, JSNan>(ptr);
+        println!("{:#?}", &obj);
+        unbox(obj);
       }
     }
   }
