@@ -686,7 +686,7 @@ pub struct ExprStmt {
   pub expr: Expr,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct BlockStmt {
   pub loc: SourceLoc,
   pub body: Vec<Stmt>,
@@ -815,7 +815,7 @@ pub struct DebugStmt {
   pub loc: SourceLoc,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Stmt {
   Block(Rc<BlockStmt>),
   VarDec(Rc<VarDec>),
