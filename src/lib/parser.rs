@@ -16,8 +16,13 @@ impl<'a> Parser<'a> {
   pub fn prog(&mut self) -> Result<Prog, ParsingError> {
     let mut body = vec![];
     loop {
-      if self.lexer.ahead_is_eof() {
-        break;
+      match self.lexer.peek() {
+        Ok(tok) => {
+          if tok.is_eof() {
+            break;
+          }
+        }
+        Err(e) => return Err(e.into()),
       }
       match self.stmt() {
         Ok(stmt) => body.push(stmt),
@@ -1075,6 +1080,8 @@ impl<'a> Parser<'a> {
           Ok(ThisExprData::new(loc).into())
         } else if tok.is_id() {
           Ok(IdData::new(loc, tok.id_data().value.clone()).into())
+        } else if tok.is_undef() {
+          Ok(UndefData::new(loc).into())
         } else if tok.is_str() {
           Ok(StringData::new(loc, tok.str_data().value.clone()).into())
         } else if tok.is_null() {
@@ -1083,6 +1090,8 @@ impl<'a> Parser<'a> {
           Ok(BoolData::new(loc, tok.bool_data().kind == BooleanLiteral::True).into())
         } else if tok.is_num() {
           Ok(NumericData::new(loc, tok.num_data().value.clone()).into())
+        } else if tok.is_symbol_kind(Symbol::BraceL) {
+          self.object_literal(&tok)
         } else if tok.is_symbol_kind(Symbol::BracketL) {
           self.array_literal(&tok)
         } else if tok.is_symbol_kind(Symbol::ParenL) {
@@ -1090,6 +1099,7 @@ impl<'a> Parser<'a> {
         } else if tok.is_keyword_kind(Keyword::Function) {
           self.fn_expr(&tok)
         } else {
+          println!("{:#?}", tok);
           Err(ParserError::at_tok(&tok).into())
         }
       }
@@ -1167,6 +1177,77 @@ impl<'a> Parser<'a> {
     Ok(dec.into())
   }
 
+  fn object_literal(&mut self, open: &Token) -> Result<PrimaryExpr, ParsingError> {
+    let mut ret = ObjectData {
+      loc: open.loc().to_owned(),
+      properties: vec![],
+    };
+    loop {
+      match self.lexer.peek() {
+        Ok(tok) => {
+          if tok.is_symbol_kind(Symbol::BraceR) {
+            match self.lexer.next() {
+              Err(e) => return Err(e.into()),
+              _ => break,
+            }
+          } else if tok.is_symbol_kind(Symbol::Comma) {
+            match self.lexer.next() {
+              Err(e) => return Err(e.into()),
+              _ => (),
+            }
+          }
+          match self.object_prop() {
+            Ok(prop) => ret.properties.push(prop),
+            Err(e) => return Err(e),
+          }
+        }
+        Err(e) => return Err(e.into()),
+      }
+    }
+    ret.loc.end = self.pos();
+    Ok(PrimaryExpr::ObjectLiteral(ret))
+  }
+
+  fn object_prop(&mut self) -> Result<ObjectProperty, ParsingError> {
+    let mut loc = self.loc();
+    let key = match self.lexer.next() {
+      Ok(tok) => {
+        if tok.is_str() {
+          PrimaryExpr::Literal(Literal::String(StringData {
+            loc: tok.loc().to_owned(),
+            value: tok.str_data().value.clone(),
+          }))
+        } else if tok.is_id() {
+          PrimaryExpr::Identifier(IdData {
+            loc: tok.loc().to_owned(),
+            name: tok.id_data().value.clone(),
+          })
+        } else {
+          return Err(ParserError::at(tok.loc()).into());
+        }
+      }
+      Err(e) => return Err(e.into()),
+    };
+    match self.lexer.next() {
+      Ok(tok) => {
+        if !tok.is_symbol_kind(Symbol::Colon) {
+          return Err(ParserError::at(tok.loc()).into());
+        }
+      }
+      Err(e) => return Err(e.into()),
+    }
+    let value = match self.assign_expr(false) {
+      Ok(expr) => expr,
+      Err(e) => return Err(e.into()),
+    };
+    loc.end = self.pos();
+    Ok(ObjectProperty {
+      loc,
+      key: key.into(),
+      value,
+    })
+  }
+
   fn array_literal(&mut self, open: &Token) -> Result<PrimaryExpr, ParsingError> {
     let mut ret = ArrayData {
       loc: open.loc().to_owned(),
@@ -1183,13 +1264,22 @@ impl<'a> Parser<'a> {
           } else if tok.is_symbol_kind(Symbol::Comma) {
             match self.lexer.next() {
               Err(e) => return Err(e.into()),
-              _ => (),
+              _ => {
+                let expr =
+                  Expr::Primary(Rc::new(PrimaryExpr::Literal(Literal::Undef(UndefData {
+                    loc: tok.loc().clone(),
+                  }))));
+                ret.value.push(expr)
+              }
             }
           } else {
             match self.assign_expr(false) {
               Ok(expr) => ret.value.push(expr),
               Err(e) => return Err(e.into()),
             };
+            if self.ahead_is_symbol(Symbol::Comma) {
+              self.lexer.advance();
+            }
           }
         }
         Err(e) => return Err(e.into()),
@@ -1207,6 +1297,7 @@ impl<'a> Parser<'a> {
   }
 }
 
+#[derive(Debug)]
 pub struct ParserError {
   pub msg: String,
 }
@@ -1237,6 +1328,7 @@ impl ParserError {
   }
 }
 
+#[derive(Debug)]
 pub enum ParsingError {
   Parser(ParserError),
   Lexer(LexError),
@@ -1786,6 +1878,27 @@ mod parser_tests {
     let call = node.expr().expr.call_expr();
     let callee = call.callee.primary().paren().value.primary();
     assert!(callee.is_fn());
+  }
+
+  #[test]
+  fn obj_literal() {
+    init_token_data();
+
+    let code = String::from(
+      "    
+    var a = {
+      b: 1,
+      c: [
+        {d: 2}
+      ],
+      e: { 'f': 3 }
+    }",
+    );
+    let src = Source::new(&code);
+    let mut lexer = Lexer::new(src);
+    let mut parser = Parser::new(&mut lexer);
+
+    let node = parser.stmt().ok().unwrap();
   }
 
   #[test]

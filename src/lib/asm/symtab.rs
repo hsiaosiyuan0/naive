@@ -3,7 +3,7 @@ use crate::visitor::AstVisitor;
 use std::collections::{HashMap, HashSet};
 use std::ptr::{drop_in_place, null_mut};
 
-type ScopePtr = *mut Scope;
+pub type ScopePtr = *mut Scope;
 
 pub fn as_scope(ptr: ScopePtr) -> &'static mut Scope {
   unsafe { &mut (*ptr) }
@@ -11,10 +11,10 @@ pub fn as_scope(ptr: ScopePtr) -> &'static mut Scope {
 
 #[derive(Debug)]
 pub struct Scope {
-  id: usize,
+  pub id: usize,
   parent: ScopePtr,
   subs: Vec<ScopePtr>,
-  bindings: HashSet<String>,
+  pub bindings: HashSet<String>,
 }
 
 impl Scope {
@@ -67,6 +67,10 @@ impl SymTab {
   fn add_binding(&mut self, n: &str) {
     as_scope(self.s).add_binding(n)
   }
+
+  pub fn get_scope(&self, i: usize) -> ScopePtr {
+    *self.scopes.get(&i).unwrap()
+  }
 }
 
 impl Drop for SymTab {
@@ -74,7 +78,7 @@ impl Drop for SymTab {
     self
       .scopes
       .values()
-      .for_each(|s| unsafe { drop_in_place(*s) })
+      .for_each(|s| unsafe { drop_in_place(*s) });
   }
 }
 
@@ -97,18 +101,19 @@ impl AstVisitor<(), ()> for SymTab {
     Ok(())
   }
 
-  fn empty_stmt(&mut self, stmt: &EmptyStmt) -> Result<(), ()> {
+  fn empty_stmt(&mut self, _stmt: &EmptyStmt) -> Result<(), ()> {
     Ok(())
   }
 
   fn expr_stmt(&mut self, stmt: &ExprStmt) -> Result<(), ()> {
+    self.expr(&stmt.expr).ok();
     Ok(())
   }
 
   fn if_stmt(&mut self, stmt: &IfStmt) -> Result<(), ()> {
-    self.stmt(&stmt.cons);
+    self.stmt(&stmt.cons).ok();
     if let Some(s) = &stmt.alt {
-      self.stmt(s);
+      self.stmt(s).ok();
     }
     Ok(())
   }
@@ -120,7 +125,7 @@ impl AstVisitor<(), ()> for SymTab {
         _ => (),
       }
     }
-    self.stmt(&stmt.body);
+    self.stmt(&stmt.body).ok();
     Ok(())
   }
 
@@ -129,36 +134,36 @@ impl AstVisitor<(), ()> for SymTab {
       ForFirst::VarDec(dec) => self.var_dec_stmt(dec).unwrap(),
       _ => (),
     }
-    self.stmt(&stmt.body);
+    self.stmt(&stmt.body).ok();
     Ok(())
   }
 
   fn do_while_stmt(&mut self, stmt: &DoWhileStmt) -> Result<(), ()> {
-    self.stmt(&stmt.body);
+    self.stmt(&stmt.body).ok();
     Ok(())
   }
 
   fn while_stmt(&mut self, stmt: &WhileStmt) -> Result<(), ()> {
-    self.stmt(&stmt.body);
+    self.stmt(&stmt.body).ok();
     Ok(())
   }
 
-  fn cont_stmt(&mut self, stmt: &ContStmt) -> Result<(), ()> {
+  fn cont_stmt(&mut self, _stmt: &ContStmt) -> Result<(), ()> {
     Ok(())
   }
 
-  fn break_stmt(&mut self, stmt: &BreakStmt) -> Result<(), ()> {
+  fn break_stmt(&mut self, _stmt: &BreakStmt) -> Result<(), ()> {
     Ok(())
   }
 
   fn ret_stmt(&mut self, stmt: &ReturnStmt) -> Result<(), ()> {
     if let Some(s) = &stmt.argument {
-      self.expr(s);
+      self.expr(s).ok();
     }
     Ok(())
   }
 
-  fn with_stmt(&mut self, stmt: &WithStmt) -> Result<(), ()> {
+  fn with_stmt(&mut self, _stmt: &WithStmt) -> Result<(), ()> {
     Ok(())
   }
 
@@ -175,12 +180,12 @@ impl AstVisitor<(), ()> for SymTab {
   }
 
   fn try_stmt(&mut self, stmt: &TryStmt) -> Result<(), ()> {
-    self.stmt(&stmt.block);
+    self.stmt(&stmt.block).ok();
     if let Some(h) = &stmt.handler {
-      self.stmt(&h.body);
+      self.stmt(&h.body).ok();
     }
     if let Some(f) = &stmt.finalizer {
-      self.stmt(&f);
+      self.stmt(&f).ok();
     }
     Ok(())
   }
@@ -198,19 +203,19 @@ impl AstVisitor<(), ()> for SymTab {
       .params
       .iter()
       .for_each(|p| self.add_binding(p.id().name.as_str()));
-    self.stmt(&stmt.body);
+    self.stmt(&stmt.body).ok();
     self.leave_scope();
     Ok(())
   }
 
   fn member_expr(&mut self, expr: &MemberExpr) -> Result<(), ()> {
-    self.expr(&expr.object);
-    self.expr(&expr.property);
+    self.expr(&expr.object).ok();
+    self.expr(&expr.property).ok();
     Ok(())
   }
 
   fn new_expr(&mut self, expr: &NewExpr) -> Result<(), ()> {
-    self.expr(&expr.callee);
+    self.expr(&expr.callee).ok();
     expr
       .arguments
       .iter()
@@ -219,7 +224,7 @@ impl AstVisitor<(), ()> for SymTab {
   }
 
   fn call_expr(&mut self, expr: &CallExpr) -> Result<(), ()> {
-    self.expr(&expr.callee);
+    self.expr(&expr.callee).ok();
     expr
       .arguments
       .iter()
@@ -228,26 +233,26 @@ impl AstVisitor<(), ()> for SymTab {
   }
 
   fn unary_expr(&mut self, expr: &UnaryExpr) -> Result<(), ()> {
-    self.expr(&expr.argument);
+    self.expr(&expr.argument).ok();
     Ok(())
   }
 
   fn binary_expr(&mut self, expr: &BinaryExpr) -> Result<(), ()> {
-    self.expr(&expr.left);
-    self.expr(&expr.right);
+    self.expr(&expr.left).ok();
+    self.expr(&expr.right).ok();
     Ok(())
   }
 
   fn assign_expr(&mut self, expr: &AssignExpr) -> Result<(), ()> {
-    self.expr(&expr.left);
-    self.expr(&expr.right);
+    self.expr(&expr.left).ok();
+    self.expr(&expr.right).ok();
     Ok(())
   }
 
   fn cond_expr(&mut self, expr: &CondExpr) -> Result<(), ()> {
-    self.expr(&expr.test);
-    self.expr(&expr.cons);
-    self.expr(&expr.alt);
+    self.expr(&expr.test).ok();
+    self.expr(&expr.cons).ok();
+    self.expr(&expr.alt).ok();
     Ok(())
   }
 
@@ -256,11 +261,11 @@ impl AstVisitor<(), ()> for SymTab {
     Ok(())
   }
 
-  fn this_expr(&mut self, expr: &ThisExprData) -> Result<(), ()> {
+  fn this_expr(&mut self, _expr: &ThisExprData) -> Result<(), ()> {
     Ok(())
   }
 
-  fn id_expr(&mut self, expr: &IdData) -> Result<(), ()> {
+  fn id_expr(&mut self, _expr: &IdData) -> Result<(), ()> {
     Ok(())
   }
 
@@ -271,48 +276,52 @@ impl AstVisitor<(), ()> for SymTab {
 
   fn object_literal(&mut self, expr: &ObjectData) -> Result<(), ()> {
     expr.properties.iter().for_each(|p| {
-      self.expr(&p.key).unwrap();
-      self.expr(&p.value).unwrap();
+      self.expr(&p.key).ok();
+      self.expr(&p.value).ok();
     });
     Ok(())
   }
 
   fn paren_expr(&mut self, expr: &ParenData) -> Result<(), ()> {
-    self.expr(&expr.value);
+    self.expr(&expr.value).ok();
     Ok(())
   }
 
   fn fn_expr(&mut self, expr: &FnDec) -> Result<(), ()> {
-    if let Some(id) = &expr.id {
-      self.add_binding(id.id().name.as_str());
-    }
+    // the id of function expression is not being used as local variable
+    // consider this code: `var a = function b() {}; b();` will produce
+    // ReferenceError `b is not defined`
     self.enter_scope();
     expr
       .params
       .iter()
       .for_each(|p| self.add_binding(p.id().name.as_str()));
-    self.stmt(&expr.body);
+    self.stmt(&expr.body).ok();
     self.leave_scope();
     Ok(())
   }
 
-  fn regexp_expr(&mut self, expr: &RegExpData) -> Result<(), ()> {
+  fn regexp_expr(&mut self, _expr: &RegExpData) -> Result<(), ()> {
     Ok(())
   }
 
-  fn null_expr(&mut self, expr: &NullData) -> Result<(), ()> {
+  fn null_expr(&mut self, _expr: &NullData) -> Result<(), ()> {
     Ok(())
   }
 
-  fn str_expr(&mut self, expr: &StringData) -> Result<(), ()> {
+  fn undef_expr(&mut self, _expr: &UndefData) -> Result<(), ()> {
     Ok(())
   }
 
-  fn bool_expr(&mut self, expr: &BoolData) -> Result<(), ()> {
+  fn str_expr(&mut self, _expr: &StringData) -> Result<(), ()> {
     Ok(())
   }
 
-  fn num_expr(&mut self, expr: &NumericData) -> Result<(), ()> {
+  fn bool_expr(&mut self, _expr: &BoolData) -> Result<(), ()> {
+    Ok(())
+  }
+
+  fn num_expr(&mut self, _expr: &NumericData) -> Result<(), ()> {
     Ok(())
   }
 }
@@ -329,7 +338,7 @@ mod symtab_tests {
   fn scope() {
     init_token_data();
 
-    let code = String::from("var a; function f(b) {var a; return function(c) {var d}}");
+    let code = String::from("var a; function f(b) {var a; return function f(c) {var d}}");
     let src = Source::new(&code);
     let mut lexer = Lexer::new(src);
     let mut parser = Parser::new(&mut lexer);
@@ -337,16 +346,16 @@ mod symtab_tests {
     let ast = parser.prog().ok().unwrap();
     symtab.prog(&ast).unwrap();
 
-    println!("{:#?}", symtab);
-
     let mut i = 0;
     let s0 = as_scope(*symtab.scopes.get(&i).unwrap());
     assert!(s0.has_binding("a"));
+    assert!(s0.has_binding("f"));
 
     i = 1;
     let s1 = as_scope(*symtab.scopes.get(&i).unwrap());
     assert!(s1.has_binding("a"));
     assert!(s1.has_binding("b"));
+    assert!(s1.has_binding("f"));
 
     i = 2;
     let s1 = as_scope(*symtab.scopes.get(&i).unwrap());

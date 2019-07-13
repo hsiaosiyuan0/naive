@@ -5,6 +5,7 @@ use std::rc::Rc;
 pub enum Literal {
   RegExp(RegExpData),
   Null(NullData),
+  Undef(UndefData),
   String(StringData),
   Bool(BoolData),
   Numeric(NumericData),
@@ -85,6 +86,7 @@ impl Literal {
     match self {
       Literal::RegExp(d) => &d.loc,
       Literal::Null(d) => &d.loc,
+      Literal::Undef(d) => &d.loc,
       Literal::Numeric(d) => &d.loc,
       Literal::String(d) => &d.loc,
       Literal::Bool(d) => &d.loc,
@@ -101,6 +103,12 @@ impl From<RegExpData> for Literal {
 impl From<NullData> for Literal {
   fn from(f: NullData) -> Self {
     Literal::Null(f)
+  }
+}
+
+impl From<UndefData> for Literal {
+  fn from(f: UndefData) -> Self {
+    Literal::Undef(f)
   }
 }
 
@@ -280,6 +288,13 @@ impl From<StringData> for PrimaryExpr {
 
 impl From<NullData> for PrimaryExpr {
   fn from(f: NullData) -> Self {
+    let node: Literal = f.into();
+    node.into()
+  }
+}
+
+impl From<UndefData> for PrimaryExpr {
+  fn from(f: UndefData) -> Self {
     let node: Literal = f.into();
     node.into()
   }
@@ -617,6 +632,17 @@ pub struct NullData {
 impl NullData {
   pub fn new(loc: SourceLoc) -> Self {
     NullData { loc }
+  }
+}
+
+#[derive(Debug)]
+pub struct UndefData {
+  pub loc: SourceLoc,
+}
+
+impl UndefData {
+  pub fn new(loc: SourceLoc) -> Self {
+    UndefData { loc }
   }
 }
 

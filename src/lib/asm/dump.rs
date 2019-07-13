@@ -2,8 +2,6 @@ extern crate byteorder;
 
 use crate::asm::chunk::*;
 use byteorder::{BigEndian, WriteBytesExt};
-use core::borrow::Borrow;
-use serde::de::Unexpected::Seq;
 use std::io::Write;
 use std::mem;
 
@@ -66,7 +64,7 @@ impl Dumper {
 
   fn w_upval(&mut self, u: &Upval) {
     self.w_byte(u.in_stack as u8);
-    self.w_u64(u.idx);
+    self.w_u32(u.idx);
   }
 
   fn w_fun_tpl(&mut self, f: &FunTpl) {

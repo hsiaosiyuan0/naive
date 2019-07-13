@@ -628,12 +628,26 @@ impl Token {
 
   pub fn is_id(&self) -> bool {
     match self {
-      Token::Identifier(_) => true,
+      Token::Identifier(v) => !v.value.eq("undefined"),
       _ => false,
     }
   }
 
   pub fn id_data(&self) -> &IdentifierData {
+    match self {
+      Token::Identifier(data) => data,
+      _ => panic!(),
+    }
+  }
+
+  pub fn is_undef(&self) -> bool {
+    match self {
+      Token::Identifier(v) => v.value.eq("undefined"),
+      _ => false,
+    }
+  }
+
+  pub fn undef_data(&self) -> &IdentifierData {
     match self {
       Token::Identifier(data) => data,
       _ => panic!(),

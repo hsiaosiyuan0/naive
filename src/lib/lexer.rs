@@ -19,6 +19,7 @@ pub struct Lexer<'a> {
   peeked: VecDeque<TokenNextNewline>,
 }
 
+#[derive(Debug)]
 pub struct LexError {
   msg: String,
 }

@@ -89,6 +89,7 @@ pub trait AstVisitor<T, E> {
     match expr {
       Literal::RegExp(ex) => self.regexp_expr(ex),
       Literal::Null(ex) => self.null_expr(ex),
+      Literal::Undef(ex) => self.undef_expr(ex),
       Literal::String(ex) => self.str_expr(ex),
       Literal::Bool(ex) => self.bool_expr(ex),
       Literal::Numeric(ex) => self.num_expr(ex),
@@ -97,6 +98,7 @@ pub trait AstVisitor<T, E> {
 
   fn regexp_expr(&mut self, expr: &RegExpData) -> Result<T, E>;
   fn null_expr(&mut self, expr: &NullData) -> Result<T, E>;
+  fn undef_expr(&mut self, expr: &UndefData) -> Result<T, E>;
   fn str_expr(&mut self, expr: &StringData) -> Result<T, E>;
   fn bool_expr(&mut self, expr: &BoolData) -> Result<T, E>;
   fn num_expr(&mut self, expr: &NumericData) -> Result<T, E>;

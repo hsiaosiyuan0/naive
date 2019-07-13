@@ -1,7 +1,9 @@
 use std::collections::HashMap;
+use std::fmt;
 use std::intrinsics::transmute;
+use std::sync::Once;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum Const {
   String(String),
   Number(f64),
@@ -55,14 +57,14 @@ impl Const {
   }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Upval {
   pub name: String,
   pub in_stack: bool,
-  pub idx: u64,
+  pub idx: u32,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Local {
   pub name: String,
 }
@@ -80,8 +82,12 @@ pub struct Inst {
 }
 
 impl Inst {
+  pub fn new() -> Self {
+    Inst { raw: 0 }
+  }
+
   pub fn a(&self) -> u32 {
-    self.raw & 0xff
+    (self.raw >> 6) & 0xff
   }
 
   pub fn b(&self) -> u32 {
@@ -101,12 +107,12 @@ impl Inst {
     t - 131071
   }
 
-  pub fn opcode(&self) -> u32 {
+  pub fn op(&self) -> u32 {
     self.raw & 0x3f
   }
 
-  pub fn set_opcode(&mut self, op: u32) {
-    self.raw = (self.raw & !0x3f) | op;
+  pub fn set_op(&mut self, op: OpCode) {
+    self.raw = (self.raw & !0x3f) | (op as u32);
   }
 
   pub fn set_a(&mut self, a: u32) {
@@ -158,7 +164,25 @@ impl Inst {
   }
 }
 
-#[derive(Clone)]
+impl fmt::Debug for Inst {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    let op = OpCode::from_u32(self.op());
+    match op.mode() {
+      InstType::ABC => write!(
+        f,
+        "{:#?}{{ A: {}, B: {}, C: {} }}",
+        op,
+        self.a(),
+        self.b(),
+        self.c()
+      ),
+      InstType::ABx => write!(f, "{:#?}{{ A: {}, Bx: {} }}", op, self.a(), self.bx()),
+      InstType::AsBx => write!(f, "{:#?}{{ A: {}, sBx: {} }}", op, self.a(), self.sbx()),
+    }
+  }
+}
+
+#[derive(Debug, Clone)]
 pub struct FunTpl {
   pub param_cnt: u8,
   pub is_vararg: bool,
@@ -196,8 +220,23 @@ pub enum OpCode {
   LOADK,
   LOADKX,
   LOADBOO,
-  LOADNI,
+  LOADNUL,
+  LOADUNDEF,
   GETUPVAL,
+  GETTABUP,
+  SETTABUP,
+  SETUPVAL,
+  SETTABLE,
+  NEWTABLE,
+  NEWARRAY,
+  INITARRAY,
+  THIS,
+  ADD,
+  SUB,
+  MUL,
+  MOD,
+  DIV,
+  CLOSURE,
 }
 
 static mut OPCODE_VAL_NAME: Option<Vec<&'static str>> = None;
@@ -223,13 +262,35 @@ fn init_opcodes() {
     LOADK => "LOADK", 1
     LOADKX => "LOADKX", 1
     LOADBOO => "LOADBOO", 0
-    LOADNI => "LOADNI", 0
+    LOADNUL => "LOADNUL", 0
+    LOADUNDEF => "LOADUNDEF", 0
     GETUPVAL => "GETUPVAL", 0
+    GETTABUP => "GETTABUP", 0
+    SETTABUP => "SETTABUP", 0
+    SETUPVAL => "SETUPVAL", 0
+    SETTABLE => "SETTABLE", 0
+    NEWTABLE => "NEWTABLE", 0
+    NEWARRAY => "NEWARRAY", 0
+    INITARRAY => "INITARRAY", 0
+    THIS => "THIS", 0
+    ADD => "ADD", 0
+    SUB => "SUB", 0
+    MUL => "MUL", 0
+    MOD => "MOD", 0
+    DIV => "DIV", 0
+    CLOSURE => "CLOSURE", 0
   };
   unsafe {
     OPCODE_VAL_NAME = id_name;
     OPCODE_VAL_MODE = id_mode;
   }
+}
+
+static INIT_OPCODE_DATA_ONCE: Once = Once::new();
+pub fn init_opcode_data() {
+  INIT_OPCODE_DATA_ONCE.call_once(|| {
+    init_opcodes();
+  });
 }
 
 impl OpCode {
@@ -249,7 +310,31 @@ mod chunk_tests {
   use super::*;
 
   #[test]
-  fn opcode() {
+  fn inst_test() {
+    let mut inst = Inst::new();
+    inst.set_op(OpCode::LOADUNDEF);
+    inst.set_a(0);
+    inst.set_b(1);
+    assert_eq!(0, inst.a());
+    assert_eq!(1, inst.b());
+
+    let mut inst = Inst::new();
+    inst.set_op(OpCode::LOADUNDEF);
+    inst.set_a(1);
+    inst.set_bx(20);
+    assert_eq!(1, inst.a());
+    assert_eq!(20, inst.bx());
+
+    let mut inst = Inst::new();
+    inst.set_op(OpCode::LOADUNDEF);
+    inst.set_a(1);
+    inst.set_sbx(-20);
+    assert_eq!(1, inst.a());
+    assert_eq!(-20, inst.sbx());
+  }
+
+  #[test]
+  fn opcode_test() {
     init_opcodes();
 
     assert_eq!(InstType::ABC, OpCode::from_u32(0).mode());
