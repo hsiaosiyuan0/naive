@@ -355,7 +355,6 @@ mod symtab_tests {
     let s1 = as_scope(*symtab.scopes.get(&i).unwrap());
     assert!(s1.has_binding("a"));
     assert!(s1.has_binding("b"));
-    assert!(s1.has_binding("f"));
 
     i = 2;
     let s1 = as_scope(*symtab.scopes.get(&i).unwrap());
