@@ -531,6 +531,7 @@ impl AstVisitor<(), CodegenError> for Codegen {
     let mut inst = Inst::new();
     let res_reg = fs.pop_res_reg();
     inst.set_a(res_reg);
+    // TODO: add map to map symbol to opcode
     match op {
       Symbol::Add => inst.set_op(OpCode::ADD),
       Symbol::Sub => inst.set_op(OpCode::SUB),
@@ -589,6 +590,19 @@ impl AstVisitor<(), CodegenError> for Codegen {
       | Symbol::GE
       | Symbol::NotEq
       | Symbol::NotEqStrict => {
+        // People who are familiar with the CLua implementation may notice that here we don't use
+        // JMP, the reason of why CLua uses JMP with EQ|LT|LE is that it treats the comparisons
+        // which their results are required as using them in the test part of the `if-else` statement,
+        // eg: it treats all `var a = b > c` as
+        // `var a = if b > c then return true else return false`
+        // We use JMP with EQ|LT|LE in `if-else` statement to eliminate a duplicated TEST, otherwise
+        // we should firstly use a temp register to save the comparison result and then use TEST to
+        // test that result to perform the conditional jump
+        // However this way(treat all comparisons as using them in `if-else`) cause a redundant JMP is
+        // produced when we just use them like `var a = b > c`, in this case the instructions can be
+        // generated like below, there is no JUMP and just three instructions are used.
+        // For the situation whenever JUMP is required will be properly handled in the outer `if-else`
+        // routine
         fs.tpl.code.last_mut().unwrap().set_a(1);
 
         let load_true_first = match op {
