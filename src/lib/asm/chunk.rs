@@ -236,6 +236,24 @@ pub enum OpCode {
   MUL,
   MOD,
   DIV,
+  LT,
+  GT,
+  LE,
+  GE,
+  EQ,
+  EQS,
+  AND,
+  OR,
+  NOT,
+  BITAND,
+  BITOR,
+  BITXOR,
+  BITNOT,
+  SHL,
+  SAR,
+  SHR,
+  NOTEQ,
+  NOTEQS,
   CLOSURE,
 }
 
@@ -278,6 +296,20 @@ fn init_opcodes() {
     MUL => "MUL", 0
     MOD => "MOD", 0
     DIV => "DIV", 0
+    LT => "LT", 0
+    LE => "LE", 0
+    EQ => "EQ", 0
+    EQS => "EQS", 0
+    ANT => "ANT", 0
+    OR => "OR", 0
+    NOT => "NOT", 0
+    BITAND => "BITAND", 0
+    BITOR => "BITOR", 0
+    BITXOR => "BITXOR", 0
+    BITNOT => "BITNOT", 0
+    SHL => "SHL", 0
+    SAR => "SAR", 0
+    SHR => "SHR", 0
     CLOSURE => "CLOSURE", 0
   };
   unsafe {

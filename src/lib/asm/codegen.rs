@@ -346,6 +346,19 @@ fn assign_upval(fs: &mut FnState, from_reg: u32, to_name: &str) {
   }
 }
 
+fn pop_last_loadk_move(fs: &mut FnState) -> Option<u32> {
+  let last_inst = fs.tpl.code.last().unwrap();
+  let last_op = OpCode::from_u32(last_inst.op());
+  if last_op == OpCode::LOADK {
+    let last_inst = fs.tpl.code.pop().unwrap();
+    Some(last_inst.bx())
+  } else if last_op == OpCode::MOVE {
+    Some(last_inst.b())
+  } else {
+    None
+  }
+}
+
 // sort statements, move function statements to the top of the others
 // does not hoist variable declarations, since they are hoisted via
 // call `declare_bindings` at the entry of each scope
@@ -514,14 +527,30 @@ impl AstVisitor<(), CodegenError> for Codegen {
   fn binary_expr(&mut self, expr: &BinaryExpr) -> Result<(), CodegenError> {
     let fs = self.fs_ref();
     let op = expr.op.symbol_data().kind;
+
     let mut inst = Inst::new();
-    inst.set_a(fs.pop_res_reg());
+    let res_reg = fs.pop_res_reg();
+    inst.set_a(res_reg);
     match op {
       Symbol::Add => inst.set_op(OpCode::ADD),
       Symbol::Sub => inst.set_op(OpCode::SUB),
       Symbol::Mul => inst.set_op(OpCode::MUL),
       Symbol::Mod => inst.set_op(OpCode::MOD),
       Symbol::Div => inst.set_op(OpCode::DIV),
+      Symbol::LT => inst.set_op(OpCode::LT),
+      Symbol::GT => inst.set_op(OpCode::LT),
+      Symbol::LE => inst.set_op(OpCode::LE),
+      Symbol::GE => inst.set_op(OpCode::LE),
+      Symbol::Eq => inst.set_op(OpCode::EQ),
+      Symbol::NotEq => inst.set_op(OpCode::EQ),
+      Symbol::EqStrict => inst.set_op(OpCode::EQS),
+      Symbol::NotEqStrict => inst.set_op(OpCode::EQS),
+      Symbol::BitAnd => inst.set_op(OpCode::BITAND),
+      Symbol::BitOr => inst.set_op(OpCode::BITOR),
+      Symbol::BitNot => inst.set_op(OpCode::BITNOT),
+      Symbol::SHL => inst.set_op(OpCode::SHL),
+      Symbol::SAR => inst.set_op(OpCode::SAR),
+      Symbol::SHR => inst.set_op(OpCode::SHR),
       _ => unimplemented!(),
     }
 
@@ -529,15 +558,8 @@ impl AstVisitor<(), CodegenError> for Codegen {
     let r_lhs = fs.take_reg();
     fs.push_res_reg(r_lhs);
     self.expr(&expr.left).ok();
-    let last_inst = fs.tpl.code.last().unwrap();
-    let last_op = OpCode::from_u32(last_inst.op());
-    if last_op == OpCode::LOADK {
-      let last_inst = fs.tpl.code.pop().unwrap();
-      inst.set_b(last_inst.bx());
-      fs.free_reg_to(r_lhs);
-    } else if last_op == OpCode::MOVE {
-      let last_inst = fs.tpl.code.pop().unwrap();
-      inst.set_b(last_inst.b());
+    if let Some(rb) = pop_last_loadk_move(fs) {
+      inst.set_b(rb);
       fs.free_reg_to(r_lhs);
     } else {
       inst.set_b(r_lhs);
@@ -547,22 +569,49 @@ impl AstVisitor<(), CodegenError> for Codegen {
     let r_rhs = fs.take_reg();
     fs.push_res_reg(r_rhs);
     self.expr(&expr.right).ok();
-    let last_inst = fs.tpl.code.last().unwrap();
-    let last_op = OpCode::from_u32(last_inst.op());
-    if last_op == OpCode::LOADK {
-      let last_inst = fs.tpl.code.pop().unwrap();
-      inst.set_c(last_inst.bx());
-      fs.free_reg_to(r_rhs);
-    } else if last_op == OpCode::MOVE {
-      let last_inst = fs.tpl.code.pop().unwrap();
-      inst.set_c(last_inst.b());
+    if let Some(rc) = pop_last_loadk_move(fs) {
+      inst.set_c(rc);
       fs.free_reg_to(r_rhs);
     } else {
       inst.set_c(r_rhs);
       tmp_regs.push(r_rhs);
     }
-    fs.free_regs(&tmp_regs);
+
     fs.push_inst(inst);
+    fs.free_regs(&tmp_regs);
+
+    match op {
+      Symbol::LT
+      | Symbol::LE
+      | Symbol::Eq
+      | Symbol::EqStrict
+      | Symbol::GT
+      | Symbol::GE
+      | Symbol::NotEq
+      | Symbol::NotEqStrict => {
+        fs.tpl.code.last_mut().unwrap().set_a(1);
+
+        let load_true_first = match op {
+          Symbol::LT | Symbol::LE | Symbol::Eq | Symbol::EqStrict => true,
+          _ => false,
+        };
+
+        let mut lb1 = Inst::new();
+        lb1.set_op(OpCode::LOADBOO);
+        lb1.set_a(res_reg);
+        lb1.set_b(if load_true_first { 1 } else { 0 });
+        lb1.set_c(1);
+        fs.push_inst(lb1);
+
+        let mut lb2 = Inst::new();
+        lb2.set_op(OpCode::LOADBOO);
+        lb2.set_a(res_reg);
+        lb2.set_b(if load_true_first { 0 } else { 1 });
+        fs.push_inst(lb2);
+      }
+      _ => (),
+    }
+
     Ok(())
   }
 
@@ -917,12 +966,26 @@ mod codegen_tests {
 
     let mut codegen = Codegen::new(symtab);
     codegen.prog(&ast).ok();
+  }
+
+  #[test]
+  fn relation_test() {
+    let ast = parse(
+      "
+    var c = a == b
+    var d = c
+    var e = d != f
+    var f = a < b
+    var f = a > b
+    var f = a >> 1
+    ",
+    );
+    let mut symtab = SymTab::new();
+    symtab.prog(&ast).unwrap();
+
+    let mut codegen = Codegen::new(symtab);
+    codegen.prog(&ast).ok();
 
     println!("{:#?}", codegen.fs_ref());
-    println!("{:#?}", as_fn_state(codegen.fs_ref().subs[0]));
-    println!(
-      "{:#?}",
-      as_fn_state(as_fn_state(codegen.fs_ref().subs[0]).subs[0])
-    );
   }
 }
