@@ -86,6 +86,31 @@ impl Inst {
     Inst { raw: 0 }
   }
 
+  pub fn new_abc(op: OpCode, a: u32, b: u32, c: u32) -> Self {
+    let mut inst = Inst::new();
+    inst.set_op(op);
+    inst.set_a(a);
+    inst.set_b(b);
+    inst.set_c(c);
+    inst
+  }
+
+  pub fn new_a_bx(op: OpCode, a: u32, bx: u32) -> Self {
+    let mut inst = Inst::new();
+    inst.set_op(op);
+    inst.set_a(a);
+    inst.set_bx(bx);
+    inst
+  }
+
+  pub fn new_a_sbx(op: OpCode, a: u32, sbx: i32) -> Self {
+    let mut inst = Inst::new();
+    inst.set_op(op);
+    inst.set_a(a);
+    inst.set_sbx(sbx);
+    inst
+  }
+
   pub fn a(&self) -> u32 {
     (self.raw >> 6) & 0xff
   }
@@ -240,6 +265,7 @@ pub enum OpCode {
   LE,
   EQ,
   EQS,
+  JMP,
   TEST,
   TESTSET,
   NOT,
@@ -296,6 +322,7 @@ fn init_opcodes() {
     OpCode::LE => "LE", OpMode::ABC
     OpCode::EQ => "EQ", OpMode::ABC
     OpCode::EQS => "EQS", OpMode::ABC
+    OpCode::JMP => "JMP", OpMode::AsBx
     OpCode::TEST => "TEST", OpMode::ABC
     OpCode::TESTSET => "TESTSET", OpMode::ABC
     OpCode::NOT => "NOT", OpMode::ABC

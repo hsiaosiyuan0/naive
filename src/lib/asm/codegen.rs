@@ -613,7 +613,23 @@ impl AstVisitor<(), CodegenError> for Codegen {
         lb2.set_b(if load_true_first { 0 } else { 1 });
         fs.push_inst(lb2);
       }
-      Symbol::And => {}
+      Symbol::And | Symbol::Or => {
+        let test_set = fs.tpl.code.last_mut().unwrap();
+        let lhs_reg = test_set.b();
+        let rhs_reg = test_set.c();
+        test_set.set_c(if op_s == Symbol::And { 1 } else { 0 });
+
+        let mut jmp = Inst::new();
+        jmp.set_op(OpCode::JMP);
+        jmp.set_sbx(1);
+        fs.push_inst(jmp);
+
+        let mut mov = Inst::new();
+        mov.set_op(OpCode::MOVE);
+        mov.set_a(res_reg);
+        mov.set_b(rhs_reg);
+        fs.push_inst(mov);
+      }
       _ => (),
     }
 
@@ -860,7 +876,7 @@ fn init_symbol_opcode_map() {
   map.insert(Symbol::SHL, OpCode::SHL);
   map.insert(Symbol::SAR, OpCode::SAR);
   map.insert(Symbol::SHR, OpCode::SHR);
-  map.insert(Symbol::And, OpCode::TEST);
+  map.insert(Symbol::And, OpCode::TESTSET);
   map.insert(Symbol::Or, OpCode::TESTSET);
   unsafe {
     SYMBOL_OPCODE_MAP = Some(map);
@@ -897,6 +913,16 @@ mod codegen_tests {
     let mut lexer = Lexer::new(src);
     let mut parser = Parser::new(&mut lexer);
     parser.prog().ok().unwrap()
+  }
+
+  fn assert_code_eq(asert: &str, test: &Vec<Inst>) {
+    let mut t = String::new();
+    test.iter().for_each(|inst| {
+      t.push_str("    ");
+      t.push_str(format!("{:#?}", inst).as_str());
+      t.push_str(",\n");
+    });
+    assert_eq!(asert.trim(), t.trim());
   }
 
   #[test]
@@ -1037,7 +1063,35 @@ mod codegen_tests {
 
     let mut codegen = Codegen::new(symtab);
     codegen.prog(&ast).ok();
+  }
 
-    println!("{:#?}", codegen.fs_ref());
+  #[test]
+  fn and_or_test() {
+    let ast = parse(
+      "
+    var c = a && b
+    var d = e || f
+    ",
+    );
+    let mut symtab = SymTab::new();
+    symtab.prog(&ast).unwrap();
+
+    let mut codegen = Codegen::new(symtab);
+    codegen.prog(&ast).ok();
+
+    let insts = "
+    GETTABUP{ A: 1, B: 0, C: 256 },
+    GETTABUP{ A: 2, B: 0, C: 257 },
+    TESTSET{ A: 0, B: 1, C: 1 },
+    JMP{ A: 0, sBx: 1 },
+    MOVE{ A: 0, B: 2, C: 0 },
+    SETTABUP{ A: 0, B: 258, C: 0 },
+    GETTABUP{ A: 1, B: 0, C: 259 },
+    GETTABUP{ A: 2, B: 0, C: 260 },
+    TESTSET{ A: 0, B: 1, C: 0 },
+    JMP{ A: 0, sBx: 1 },
+    MOVE{ A: 0, B: 2, C: 0 },
+    SETTABUP{ A: 0, B: 261, C: 0 },";
+    assert_code_eq(insts, &codegen.fs_ref().tpl.code);
   }
 }
