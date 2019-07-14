@@ -1593,7 +1593,7 @@ mod codegen_tests {
     ADD{ A: 1, B: 2, C: 3 },
     GETTABUP{ A: 2, B: 0, C: 256 },
     ADD{ A: 3, B: 2, C: 1 },
-    SETTABUP{ A: 0, B: 256, C: 3 }";
+    SETTABUP{ A: 0, B: 256, C: 3 },";
     assert_code_eq(insts, &codegen.fs_ref().tpl.code);
   }
 }
