@@ -10,6 +10,14 @@ pub enum Const {
 }
 
 impl Const {
+  pub fn new_str(s: &str) -> Self {
+    Const::String(s.to_string())
+  }
+
+  pub fn new_num(n: f64) -> Self {
+    Const::Number(n)
+  }
+
   pub fn typ_id(&self) -> u8 {
     match self {
       Const::String(_) => 0,
@@ -249,6 +257,7 @@ pub enum OpCode {
   LOADUNDEF,
   GETUPVAL,
   GETTABUP,
+  GETTABLE,
   SETTABUP,
   SETUPVAL,
   SETTABLE,
@@ -268,14 +277,15 @@ pub enum OpCode {
   JMP,
   TEST,
   TESTSET,
-  NOT,
   BITAND,
   BITOR,
   BITXOR,
-  BITNOT,
   SHL,
   SAR,
   SHR,
+  UNM,
+  NOT,
+  BITNOT,
   CLOSURE,
 }
 
@@ -306,6 +316,7 @@ fn init_opcodes() {
     OpCode::LOADUNDEF => "LOADUNDEF", OpMode::ABC
     OpCode::GETUPVAL => "GETUPVAL", OpMode::ABC
     OpCode::GETTABUP => "GETTABUP", OpMode::ABC
+    OpCode::GETTABLE => "GETTABLE", OpMode::ABC
     OpCode::SETTABUP => "SETTABUP", OpMode::ABC
     OpCode::SETUPVAL => "SETUPVAL", OpMode::ABC
     OpCode::SETTABLE => "SETTABLE", OpMode::ABC
@@ -325,14 +336,15 @@ fn init_opcodes() {
     OpCode::JMP => "JMP", OpMode::AsBx
     OpCode::TEST => "TEST", OpMode::ABC
     OpCode::TESTSET => "TESTSET", OpMode::ABC
-    OpCode::NOT => "NOT", OpMode::ABC
     OpCode::BITAND => "BITAND", OpMode::ABC
     OpCode::BITOR => "BITOR", OpMode::ABC
     OpCode::BITXOR => "BITXOR", OpMode::ABC
-    OpCode::BITNOT => "BITNOT", OpMode::ABC
     OpCode::SHL => "SHL", OpMode::ABC
     OpCode::SAR => "SAR", OpMode::ABC
     OpCode::SHR => "SHR", OpMode::ABC
+    OpCode::UNM => "UNM", OpMode::ABC
+    OpCode::NOT => "NOT", OpMode::ABC
+    OpCode::BITNOT => "BITNOT", OpMode::ABC
     OpCode::CLOSURE => "CLOSURE", OpMode::ABC
   };
   unsafe {
@@ -363,6 +375,10 @@ impl OpCode {
 
   pub fn mode(&self) -> OpMode {
     *op_to_mode(self)
+  }
+
+  pub fn eq(&self, op: u32) -> bool {
+    OpCode::from_u32(op) == *self
   }
 }
 

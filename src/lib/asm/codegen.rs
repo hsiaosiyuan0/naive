@@ -178,8 +178,11 @@ impl FnState {
     self.res_reg.push(r);
   }
 
-  fn pop_res_reg(&mut self) -> u32 {
-    self.res_reg.pop().unwrap()
+  fn pop_res_reg(&mut self) -> (u32, bool) {
+    match self.res_reg.pop() {
+      Some(r) => (r, false),
+      None => (self.take_reg(), true),
+    }
   }
 
   fn push_inst(&mut self, c: Inst) {
@@ -191,11 +194,13 @@ impl FnState {
   }
 
   fn free_regs(&mut self, rs: &[u32]) {
-    let mut mr = std::u32::MAX;
-    for r in rs {
-      mr = min(mr, *r);
+    if rs.len() > 0 {
+      let mut mr = std::u32::MAX;
+      for r in rs {
+        mr = min(mr, *r);
+      }
+      self.free_reg_to(mr);
     }
-    self.free_reg_to(mr);
   }
 }
 
@@ -327,14 +332,14 @@ impl Drop for Codegen {
   }
 }
 
-fn assign_upval(fs: &mut FnState, from_reg: u32, to_name: &str) {
+fn assign_upval(fs: &mut FnState, from_reg: u32, to_name: &str) -> Inst {
   let has_def = fs.add_upval(to_name);
   if has_def {
     let mut inst = Inst::new();
     inst.set_op(OpCode::SETUPVAL);
     inst.set_b(fs.get_upval(to_name).unwrap().idx);
     inst.set_a(from_reg);
-    fs.push_inst(inst);
+    inst
   } else {
     let mut inst = Inst::new();
     inst.set_op(OpCode::SETTABUP);
@@ -343,18 +348,36 @@ fn assign_upval(fs: &mut FnState, from_reg: u32, to_name: &str) {
     fs.add_const(&kst);
     inst.set_b(kst_id_rk(fs.const2idx(&kst)));
     inst.set_c(from_reg);
-    fs.push_inst(inst);
+    inst
   }
 }
 
-fn pop_last_loadk_move(fs: &mut FnState) -> Option<u32> {
+fn load_upval(fs: &mut FnState, from_name: &str, to_reg: u32) -> Inst {
+  let has_def = fs.add_upval(from_name);
+  if has_def {
+    let mut inst = Inst::new();
+    inst.set_op(OpCode::GETUPVAL);
+    inst.set_a(to_reg);
+    inst.set_b(fs.get_upval(from_name).unwrap().idx);
+    inst
+  } else {
+    let mut inst = Inst::new();
+    inst.set_op(OpCode::GETTABUP);
+    inst.set_a(to_reg);
+    inst.set_b(fs.get_upval(ENV_NAME).unwrap().idx);
+    let kst = Const::String(from_name.to_string());
+    fs.add_const(&kst);
+    inst.set_c(kst_id_rk(fs.const2idx(&kst)));
+    inst
+  }
+}
+
+fn pop_last_loadk(fs: &mut FnState) -> Option<u32> {
   let last_inst = fs.tpl.code.last().unwrap();
   let last_op = OpCode::from_u32(last_inst.op());
   if last_op == OpCode::LOADK {
     let last_inst = fs.tpl.code.pop().unwrap();
     Some(last_inst.bx())
-  } else if last_op == OpCode::MOVE {
-    Some(last_inst.b())
   } else {
     None
   }
@@ -407,12 +430,21 @@ impl AstVisitor<(), CodegenError> for Codegen {
           fs.push_res_reg(fs.local2reg(n));
           self.expr(&init).ok();
         } else {
+          let mut tmp_regs = vec![];
           let tmp_reg = fs.take_reg();
           fs.push_res_reg(tmp_reg);
           self.expr(&init).ok();
+          let rk = if let Some(r) = pop_last_loadk(fs) {
+            fs.free_reg_to(tmp_reg);
+            r
+          } else {
+            tmp_regs.push(tmp_reg);
+            tmp_reg
+          };
 
-          assign_upval(fs, tmp_reg, n);
-          fs.free_reg_to(tmp_reg);
+          let inst = assign_upval(fs, rk, n);
+          fs.push_inst(inst);
+          fs.free_regs(&tmp_regs);
         }
       }
     });
@@ -505,7 +537,8 @@ impl AstVisitor<(), CodegenError> for Codegen {
     pfs.push_inst(inst);
 
     if !pfs.has_local(id) {
-      assign_upval(pfs, ra, id);
+      let inst = assign_upval(pfs, ra, id);
+      pfs.push_inst(inst);
       pfs.free_reg_to(ra);
     }
 
@@ -517,7 +550,72 @@ impl AstVisitor<(), CodegenError> for Codegen {
   }
 
   fn member_expr(&mut self, expr: &MemberExpr) -> Result<(), CodegenError> {
-    unimplemented!()
+    let fs = self.fs_ref();
+    let mut tmp_regs = vec![];
+    let (res_reg, is_tmp) = fs.pop_res_reg();
+    if is_tmp {
+      tmp_regs.push(res_reg)
+    }
+
+    let mut inst = Inst::new();
+    match &expr.object {
+      Expr::Primary(pri) => {
+        if !pri.is_id() {
+          return Err(CodegenError::new("lhs must be LVal"));
+        }
+        let id = pri.id().name.as_str();
+        if fs.has_local(id) {
+          inst.set_op(OpCode::GETTABLE);
+          inst.set_a(res_reg);
+          inst.set_b(fs.local2reg(id));
+        } else {
+          let has_def = fs.add_upval(id);
+          let mut inst1 = load_upval(fs, id, res_reg);
+          if has_def {
+            inst1.set_op(OpCode::GETTABUP);
+            inst = inst1;
+          } else {
+            // get Gbl into temp register
+            let tr = fs.take_reg();
+            inst1.set_a(tr);
+            fs.push_inst(inst1);
+            tmp_regs.push(tr);
+
+            // GETTABLE on above temp register
+            inst.set_op(OpCode::GETTABLE);
+            inst.set_a(res_reg);
+            inst.set_b(tr);
+          }
+        }
+      }
+      _ => {
+        let tr = fs.take_reg();
+        fs.push_res_reg(tr);
+        self.expr(&expr.object).ok();
+        tmp_regs.push(tr);
+
+        inst.set_op(OpCode::GETTABLE);
+        inst.set_a(res_reg);
+        inst.set_b(tr);
+      }
+    }
+
+    if expr.computed {
+      let tr = fs.take_reg();
+      fs.push_res_reg(tr);
+      self.expr(&expr.property).ok();
+      tmp_regs.push(tr);
+      inst.set_c(tr);
+    } else {
+      let n = expr.property.primary().id().name.as_str();
+      let kst = Const::new_str(n);
+      fs.add_const(&kst);
+      inst.set_c(kst_id_rk(fs.const2idx(&kst)));
+    }
+
+    fs.push_inst(inst);
+    fs.free_regs(&tmp_regs);
+    Ok(())
   }
 
   fn new_expr(&mut self, expr: &NewExpr) -> Result<(), CodegenError> {
@@ -529,7 +627,90 @@ impl AstVisitor<(), CodegenError> for Codegen {
   }
 
   fn unary_expr(&mut self, expr: &UnaryExpr) -> Result<(), CodegenError> {
-    unimplemented!()
+    let fs = self.fs_ref();
+
+    let mut tmp_regs = vec![];
+    let (res_reg, is_tmp) = fs.pop_res_reg();
+    if is_tmp {
+      tmp_regs.push(res_reg)
+    }
+
+    let sym = expr.op.symbol_data().kind;
+    match sym {
+      Symbol::Sub | Symbol::Not | Symbol::BitNot => {
+        let op = match sym {
+          Symbol::Sub => OpCode::UNM,
+          Symbol::Not => OpCode::NOT,
+          Symbol::BitNot => OpCode::BITNOT,
+          _ => panic!(),
+        };
+
+        let mut inst = Inst::new();
+        inst.set_op(op);
+        inst.set_a(res_reg);
+
+        let tr = fs.take_reg();
+        fs.push_res_reg(tr);
+        self.expr(&expr.argument).ok();
+        if let Some(r) = pop_last_loadk(fs) {
+          inst.set_b(r);
+        } else {
+          inst.set_b(tr);
+        }
+        fs.push_inst(inst);
+        fs.free_regs(&tmp_regs);
+      }
+      Symbol::Inc | Symbol::Dec => {
+        let op_tok = if sym == Symbol::Inc {
+          Token::Symbol(SymbolData {
+            kind: Symbol::AssignAdd,
+            loc: SourceLoc::new(),
+          })
+        } else {
+          Token::Symbol(SymbolData {
+            kind: Symbol::AssignSub,
+            loc: SourceLoc::new(),
+          })
+        };
+
+        if !expr.prefix {
+          // if expr is postfix we should compute the value of
+          // argument and move the compute result to the result register
+          let m_b = fs.take_reg();
+          fs.push_res_reg(m_b);
+          self.expr(&expr.argument).ok();
+          tmp_regs.push(m_b);
+
+          let mut mov = Inst::new();
+          mov.set_op(OpCode::MOVE);
+          mov.set_a(res_reg);
+          mov.set_b(m_b);
+          fs.push_inst(mov);
+        }
+
+        let assign: Expr = AssignExpr {
+          loc: SourceLoc::new(),
+          op: op_tok,
+          left: expr.argument.clone(),
+          right: PrimaryExpr::Literal(Literal::Numeric(NumericData::new(
+            SourceLoc::new(),
+            "1".to_owned(),
+          )))
+          .into(),
+        }
+        .into();
+
+        // if expr is prefix, we should push result register into res_reg_stack
+        // to let the anonymous assign to put its result in it
+        if expr.prefix {
+          fs.push_res_reg(res_reg);
+        }
+        self.expr(&assign).ok();
+        fs.free_regs(&tmp_regs);
+      }
+      _ => panic!(),
+    }
+    Ok(())
   }
 
   fn binary_expr(&mut self, expr: &BinaryExpr) -> Result<(), CodegenError> {
@@ -537,19 +718,23 @@ impl AstVisitor<(), CodegenError> for Codegen {
     let op_s = expr.op.symbol_data().kind;
 
     let mut inst = Inst::new();
-    let res_reg = fs.pop_res_reg();
-    inst.set_a(res_reg);
 
+    let mut tmp_regs = vec![];
+    let (res_reg, is_tmp) = fs.pop_res_reg();
+    if is_tmp {
+      tmp_regs.push(res_reg)
+    }
+
+    inst.set_a(res_reg);
     match symbol_to_opcode(op_s) {
       Some(op) => inst.set_op(*op),
       _ => unimplemented!(),
     }
 
-    let mut tmp_regs = vec![];
     let r_lhs = fs.take_reg();
     fs.push_res_reg(r_lhs);
     self.expr(&expr.left).ok();
-    if let Some(rb) = pop_last_loadk_move(fs) {
+    if let Some(rb) = pop_last_loadk(fs) {
       inst.set_b(rb);
       fs.free_reg_to(r_lhs);
     } else {
@@ -560,7 +745,7 @@ impl AstVisitor<(), CodegenError> for Codegen {
     let r_rhs = fs.take_reg();
     fs.push_res_reg(r_rhs);
     self.expr(&expr.right).ok();
-    if let Some(rc) = pop_last_loadk_move(fs) {
+    if let Some(rc) = pop_last_loadk(fs) {
       inst.set_c(rc);
       fs.free_reg_to(r_rhs);
     } else {
@@ -638,17 +823,131 @@ impl AstVisitor<(), CodegenError> for Codegen {
 
   fn assign_expr(&mut self, expr: &AssignExpr) -> Result<(), CodegenError> {
     let fs = self.fs_ref();
+
+    let mut tmp_regs = vec![];
+    let (res_reg, is_res_tmp) = fs.pop_res_reg();
+    if is_res_tmp {
+      tmp_regs.push(res_reg)
+    }
+
+    let mut rc = fs.take_reg();
+    fs.push_res_reg(rc);
+    self.expr(&expr.right).ok();
+    if let Some(r) = pop_last_loadk(fs) {
+      fs.free_reg_to(rc);
+      rc = r;
+    } else {
+      tmp_regs.push(rc);
+    }
+
+    let mut inst = Inst::new();
     match &expr.left {
       Expr::Primary(pri) => {
-        let lhs_name = pri.id().name.as_str();
-        if fs.has_local(lhs_name) {
-          let r = fs.local2reg(lhs_name);
-          fs.res_reg.push(r);
-          self.expr(&expr.right).ok();
+        if !pri.is_id() {
+          return Err(CodegenError::new("lhs must be LVal"));
+        }
+        let id = pri.id().name.as_str();
+        if fs.has_local(id) {
+          inst.set_op(OpCode::MOVE);
+          inst.set_a(fs.local2reg(id));
+        } else {
+          inst = assign_upval(fs, 0, id);
         }
       }
-      _ => (),
+      Expr::Member(m) => {
+        match &m.object {
+          // if object is identifier then we estimate it's local or upval to generate
+          // SETTABLE or SETTABUP, this way we can directly manipulate it without loading
+          // it into a temp register firstly and then apply SETTABLE on the temp register
+          Expr::Primary(pri) => {
+            if !pri.is_id() {
+              return Err(CodegenError::new("lhs must be LVal"));
+            }
+            let id = pri.id().name.as_str();
+            if fs.has_local(id) {
+              inst.set_op(OpCode::SETTABLE);
+              inst.set_a(fs.local2reg(id));
+            } else {
+              let has_def = fs.add_upval(id);
+              if has_def {
+                inst.set_op(OpCode::SETTABUP);
+                inst.set_a(fs.get_upval(id).unwrap().idx)
+              } else {
+                let tr = fs.take_reg();
+                let mut get_gbl = Inst::new();
+                get_gbl.set_op(OpCode::GETTABUP);
+                get_gbl.set_a(tr);
+                get_gbl.set_b(fs.get_upval(ENV_NAME).unwrap().idx);
+                let kst = Const::new_str(id);
+                fs.add_const(&kst);
+                get_gbl.set_c(kst_id_rk(fs.const2idx(&kst)));
+                fs.push_inst(get_gbl);
+                tmp_regs.push(tr);
+
+                inst.set_op(OpCode::SETTABLE);
+                inst.set_a(tr);
+              }
+            }
+          }
+          _ => {
+            inst.set_op(OpCode::SETTABLE);
+            let tr = fs.take_reg();
+            fs.push_res_reg(tr);
+            self.expr(&m.object).ok();
+            inst.set_a(tr);
+            tmp_regs.push(tr);
+          }
+        }
+
+        if m.computed {
+          let rb = fs.take_reg();
+          fs.push_res_reg(rb);
+          self.expr(&m.property).ok();
+          tmp_regs.push(rb);
+          inst.set_b(rb);
+        } else {
+          let n = m.property.primary().id().name.as_str();
+          let kst = Const::new_str(n);
+          fs.add_const(&kst);
+          inst.set_b(kst_id_rk(fs.const2idx(&kst)));
+        }
+      }
+      _ => return Err(CodegenError::new("lhs must be LVal")),
     }
+
+    if !expr.op.is_symbol_kind(Symbol::Assign) {
+      let rb = fs.take_reg();
+      fs.push_res_reg(rb);
+      self.expr(&expr.left).ok();
+      tmp_regs.push(rb);
+
+      let rk = rc;
+      rc = fs.take_reg();
+      let mut binop = Inst::new();
+      binop.set_op(*symbol_to_opcode(expr.op.symbol_data().kind).unwrap());
+      binop.set_a(rc);
+      binop.set_b(rb);
+      binop.set_c(rk);
+      fs.push_inst(binop);
+      tmp_regs.push(rc);
+    }
+
+    let op = OpCode::from_u32(inst.op());
+    match op {
+      OpCode::MOVE => inst.set_b(rc),
+      OpCode::SETUPVAL => inst.set_a(rc),
+      OpCode::SETTABLE | OpCode::SETTABUP => inst.set_c(rc),
+      _ => panic!(),
+    }
+    fs.push_inst(inst);
+    if !is_res_tmp {
+      let mut mov = Inst::new();
+      mov.set_op(OpCode::MOVE);
+      mov.set_a(res_reg);
+      mov.set_b(rc);
+      fs.push_inst(mov);
+    }
+    fs.free_regs(&tmp_regs);
     Ok(())
   }
 
@@ -658,12 +957,17 @@ impl AstVisitor<(), CodegenError> for Codegen {
 
   fn seq_expr(&mut self, expr: &SeqExpr) -> Result<(), CodegenError> {
     let fs = self.fs_ref();
-    let ret_reg = fs.pop_res_reg();
+
     let mut tmp_regs = vec![];
+    let (res_reg, is_tmp) = fs.pop_res_reg();
+    if is_tmp {
+      tmp_regs.push(res_reg)
+    }
+
     let len = expr.exprs.len();
     expr.exprs.iter().enumerate().for_each(|(i, expr)| {
       if i == len - 1 {
-        fs.push_res_reg(ret_reg);
+        fs.push_res_reg(res_reg);
       } else {
         let tmp_reg = fs.take_reg();
         fs.push_res_reg(tmp_reg);
@@ -682,10 +986,17 @@ impl AstVisitor<(), CodegenError> for Codegen {
   fn id_expr(&mut self, expr: &IdData) -> Result<(), CodegenError> {
     let fs = self.fs_ref();
     let n = expr.name.as_str();
+
+    let mut tmp_regs = vec![];
+    let (res_reg, is_tmp) = fs.pop_res_reg();
+    if is_tmp {
+      tmp_regs.push(res_reg)
+    }
+
     if fs.has_local(n) {
       let mut inst = Inst::new();
       inst.set_op(OpCode::MOVE);
-      inst.set_a(fs.pop_res_reg());
+      inst.set_a(res_reg);
       inst.set_b(fs.local2reg(n));
       fs.push_inst(inst);
     } else {
@@ -693,7 +1004,7 @@ impl AstVisitor<(), CodegenError> for Codegen {
       if has_def {
         let mut inst = Inst::new();
         inst.set_op(OpCode::GETUPVAL);
-        inst.set_a(fs.pop_res_reg());
+        inst.set_a(res_reg);
         inst.set_b(fs.get_upval(n).unwrap().idx);
         fs.push_inst(inst);
       } else {
@@ -701,12 +1012,14 @@ impl AstVisitor<(), CodegenError> for Codegen {
         fs.add_const(&kst);
         let mut inst = Inst::new();
         inst.set_op(OpCode::GETTABUP);
-        inst.set_a(fs.pop_res_reg());
+        inst.set_a(res_reg);
         inst.set_b(fs.get_upval(ENV_NAME).unwrap().idx);
         inst.set_c(kst_id_rk(fs.const2idx(&kst)));
         fs.push_inst(inst);
       }
     }
+
+    fs.free_regs(&tmp_regs);
     Ok(())
   }
 
@@ -714,30 +1027,33 @@ impl AstVisitor<(), CodegenError> for Codegen {
     let fs = self.fs_ref();
     let mut inst = Inst::new();
     inst.set_op(OpCode::NEWARRAY);
-    let arr_reg = fs.pop_res_reg();
-    inst.set_a(arr_reg);
+
+    let mut tmp_regs = vec![];
+    let (res_reg, is_tmp) = fs.pop_res_reg();
+    if is_tmp {
+      tmp_regs.push(res_reg)
+    }
+
+    inst.set_a(res_reg);
     fs.push_inst(inst);
 
     if expr.value.len() > 0 {
-      let mut free_reg = 0;
       let mut i = 0;
       expr.value.iter().for_each(|expr| {
         let r = fs.take_reg();
-        if i == 0 {
-          free_reg = r;
-        }
+        tmp_regs.push(r);
         fs.push_res_reg(r);
         self.expr(expr).ok();
         i += 1;
       });
       let mut inst = Inst::new();
       inst.set_op(OpCode::INITARRAY);
-      inst.set_a(arr_reg);
+      inst.set_a(res_reg);
       inst.set_b(i);
       fs.push_inst(inst);
-      fs.free_reg_to(free_reg);
     }
 
+    fs.free_regs(&tmp_regs);
     Ok(())
   }
 
@@ -745,13 +1061,17 @@ impl AstVisitor<(), CodegenError> for Codegen {
     let fs = self.fs_ref();
     let mut inst = Inst::new();
     inst.set_op(OpCode::NEWTABLE);
-    let tbl_reg = fs.pop_res_reg();
-    inst.set_a(tbl_reg);
+
+    let mut tmp_regs = vec![];
+    let (res_reg, is_tmp) = fs.pop_res_reg();
+    if is_tmp {
+      tmp_regs.push(res_reg)
+    }
+
+    inst.set_a(res_reg);
     fs.push_inst(inst);
 
     if expr.properties.len() > 0 {
-      let mut free_reg = 0;
-      let mut i = 0;
       expr.properties.iter().for_each(|prop| {
         let kst = if prop.key.primary().is_id() {
           Const::String(prop.key.primary().id().name.clone())
@@ -762,24 +1082,20 @@ impl AstVisitor<(), CodegenError> for Codegen {
 
         let mut inst = Inst::new();
         inst.set_op(OpCode::SETTABLE);
-        inst.set_a(tbl_reg);
+        inst.set_a(res_reg);
         inst.set_b(kst_id_rk(fs.const2idx(&kst)));
 
         let r = fs.take_reg();
-        if i == 0 {
-          free_reg = r;
-        }
+        tmp_regs.push(r);
         fs.push_res_reg(r);
         inst.set_c(r);
 
         self.expr(&prop.value).ok();
-
         fs.push_inst(inst);
-        i += 1;
       });
-      fs.free_reg_to(free_reg);
     }
 
+    fs.free_regs(&tmp_regs);
     Ok(())
   }
 
@@ -798,53 +1114,93 @@ impl AstVisitor<(), CodegenError> for Codegen {
 
   fn null_expr(&mut self, expr: &NullData) -> Result<(), CodegenError> {
     let fs = self.fs_ref();
+
+    let mut tmp_regs = vec![];
+    let (res_reg, is_tmp) = fs.pop_res_reg();
+    if is_tmp {
+      tmp_regs.push(res_reg)
+    }
+
     let mut inst = Inst::new();
     inst.set_op(OpCode::LOADNUL);
-    inst.set_a(fs.pop_res_reg());
+    inst.set_a(res_reg);
     fs.push_inst(inst);
+    fs.free_regs(&tmp_regs);
     Ok(())
   }
 
   fn undef_expr(&mut self, expr: &UndefData) -> Result<(), CodegenError> {
     let fs = self.fs_ref();
+
+    let mut tmp_regs = vec![];
+    let (res_reg, is_tmp) = fs.pop_res_reg();
+    if is_tmp {
+      tmp_regs.push(res_reg)
+    }
+
     let mut inst = Inst::new();
     inst.set_op(OpCode::LOADUNDEF);
-    inst.set_a(fs.pop_res_reg());
+    inst.set_a(res_reg);
     fs.push_inst(inst);
+    fs.free_regs(&tmp_regs);
     Ok(())
   }
 
   fn str_expr(&mut self, expr: &StringData) -> Result<(), CodegenError> {
     let fs = self.fs_ref();
+
+    let mut tmp_regs = vec![];
+    let (res_reg, is_tmp) = fs.pop_res_reg();
+    if is_tmp {
+      tmp_regs.push(res_reg)
+    }
+
     let kst = Const::String(expr.value.clone());
     fs.add_const(&kst);
     let mut inst = Inst::new();
     inst.set_op(OpCode::LOADK);
-    inst.set_a(fs.pop_res_reg());
+    inst.set_a(res_reg);
     inst.set_bx(kst_id_rk(fs.const2idx(&kst)));
     fs.push_inst(inst);
+    fs.free_regs(&tmp_regs);
     Ok(())
   }
 
   fn bool_expr(&mut self, expr: &BoolData) -> Result<(), CodegenError> {
     let fs = self.fs_ref();
+
+    let mut tmp_regs = vec![];
+    let (res_reg, is_tmp) = fs.pop_res_reg();
+    if is_tmp {
+      tmp_regs.push(res_reg)
+    }
+
     let mut inst = Inst::new();
     inst.set_op(OpCode::LOADBOO);
-    inst.set_a(fs.pop_res_reg());
+    inst.set_a(res_reg);
     inst.set_b(if expr.value { 1 } else { 0 });
     fs.push_inst(inst);
+    fs.free_regs(&tmp_regs);
     Ok(())
   }
 
   fn num_expr(&mut self, expr: &NumericData) -> Result<(), CodegenError> {
     let fs = self.fs_ref();
+
+    let mut tmp_regs = vec![];
+    let (res_reg, is_tmp) = fs.pop_res_reg();
+    if is_tmp {
+      tmp_regs.push(res_reg)
+    }
+
     let kst = Const::Number(expr.value.parse().ok().unwrap());
     fs.add_const(&kst);
     let mut inst = Inst::new();
     inst.set_op(OpCode::LOADK);
-    inst.set_a(fs.pop_res_reg());
+    inst.set_a(res_reg);
     inst.set_bx(kst_id_rk(fs.const2idx(&kst)));
     fs.push_inst(inst);
+    fs.free_regs(&tmp_regs);
     Ok(())
   }
 }
@@ -878,6 +1234,17 @@ fn init_symbol_opcode_map() {
   map.insert(Symbol::SHR, OpCode::SHR);
   map.insert(Symbol::And, OpCode::TESTSET);
   map.insert(Symbol::Or, OpCode::TESTSET);
+  map.insert(Symbol::AssignAdd, OpCode::ADD);
+  map.insert(Symbol::AssignSub, OpCode::SUB);
+  map.insert(Symbol::AssignMul, OpCode::MUL);
+  map.insert(Symbol::AssignDiv, OpCode::DIV);
+  map.insert(Symbol::AssignMod, OpCode::MOD);
+  map.insert(Symbol::AssignSHL, OpCode::SHL);
+  map.insert(Symbol::AssignSAR, OpCode::SAR);
+  map.insert(Symbol::AssignSHR, OpCode::SHR);
+  map.insert(Symbol::AssignBitAnd, OpCode::BITAND);
+  map.insert(Symbol::AssignBitOr, OpCode::BITOR);
+  map.insert(Symbol::AssignBitXor, OpCode::BITXOR);
   unsafe {
     SYMBOL_OPCODE_MAP = Some(map);
   }
@@ -912,7 +1279,8 @@ mod codegen_tests {
     let src = Source::new(&code);
     let mut lexer = Lexer::new(src);
     let mut parser = Parser::new(&mut lexer);
-    parser.prog().ok().unwrap()
+    let ast = parser.prog().ok().unwrap();
+    ast
   }
 
   fn assert_code_eq(asert: &str, test: &Vec<Inst>) {
@@ -997,6 +1365,31 @@ mod codegen_tests {
 
     let mut codegen = Codegen::new(symtab);
     codegen.prog(&ast).ok();
+  }
+
+  #[test]
+  fn binop_kst() {
+    let ast = parse(
+      "
+        var a = 1
+        var b = a
+        var c = b + 2
+        ",
+    );
+    let mut symtab = SymTab::new();
+    symtab.prog(&ast).unwrap();
+
+    let mut codegen = Codegen::new(symtab);
+    codegen.prog(&ast).ok();
+
+    let insts = "
+    SETTABUP{ A: 0, B: 257, C: 256 },
+    GETTABUP{ A: 0, B: 0, C: 257 },
+    SETTABUP{ A: 0, B: 258, C: 0 },
+    GETTABUP{ A: 1, B: 0, C: 258 },
+    ADD{ A: 0, B: 1, C: 259 },
+    SETTABUP{ A: 0, B: 260, C: 0 },";
+    assert_code_eq(insts, &codegen.fs_ref().tpl.code);
   }
 
   #[test]
@@ -1092,6 +1485,115 @@ mod codegen_tests {
     JMP{ A: 0, sBx: 1 },
     MOVE{ A: 0, B: 2, C: 0 },
     SETTABUP{ A: 0, B: 261, C: 0 },";
+    assert_code_eq(insts, &codegen.fs_ref().tpl.code);
+  }
+
+  #[test]
+  fn assign_test() {
+    let ast = parse(
+      "
+    c = a + b
+    e.f = 1 + 2
+    a = b = 1
+    ",
+    );
+    let mut symtab = SymTab::new();
+    symtab.prog(&ast).unwrap();
+
+    let mut codegen = Codegen::new(symtab);
+    codegen.prog(&ast).ok();
+
+    let insts = "
+    GETTABUP{ A: 2, B: 0, C: 256 },
+    GETTABUP{ A: 3, B: 0, C: 257 },
+    ADD{ A: 1, B: 2, C: 3 },
+    SETTABUP{ A: 0, B: 258, C: 1 },
+    ADD{ A: 1, B: 259, C: 260 },
+    GETTABUP{ A: 2, B: 0, C: 261 },
+    SETTABLE{ A: 2, B: 262, C: 1 },
+    SETTABUP{ A: 0, B: 257, C: 259 },
+    MOVE{ A: 1, B: 259, C: 0 },
+    SETTABUP{ A: 0, B: 256, C: 1 },";
+    assert_code_eq(insts, &codegen.fs_ref().tpl.code);
+  }
+
+  #[test]
+  fn binop_assign_test() {
+    let ast = parse(
+      "
+    a.b += c + 2
+    e += 1
+    ",
+    );
+    let mut symtab = SymTab::new();
+    symtab.prog(&ast).unwrap();
+
+    let mut codegen = Codegen::new(symtab);
+    codegen.prog(&ast).ok();
+
+    let insts = "            
+    GETTABUP{ A: 2, B: 0, C: 256 },
+    ADD{ A: 1, B: 2, C: 257 },
+    GETTABUP{ A: 2, B: 0, C: 258 },
+    GETTABUP{ A: 4, B: 0, C: 258 },
+    GETTABLE{ A: 3, B: 4, C: 259 },
+    ADD{ A: 4, B: 3, C: 1 },
+    SETTABLE{ A: 2, B: 259, C: 4 },
+    GETTABUP{ A: 1, B: 0, C: 261 },
+    ADD{ A: 2, B: 1, C: 260 },
+    SETTABUP{ A: 0, B: 261, C: 2 },";
+    assert_code_eq(insts, &codegen.fs_ref().tpl.code);
+  }
+
+  #[test]
+  fn unary_test() {
+    let ast = parse(
+      "
+    a = a & ~b
+    ",
+    );
+    let mut symtab = SymTab::new();
+    symtab.prog(&ast).unwrap();
+
+    let mut codegen = Codegen::new(symtab);
+    codegen.prog(&ast).ok();
+
+    let insts = "
+    GETTABUP{ A: 2, B: 0, C: 256 },
+    GETTABUP{ A: 4, B: 0, C: 257 },
+    BITNOT{ A: 3, B: 4, C: 0 },
+    BITAND{ A: 1, B: 2, C: 3 },
+    SETTABUP{ A: 0, B: 256, C: 1 },";
+    assert_code_eq(insts, &codegen.fs_ref().tpl.code);
+  }
+
+  #[test]
+  fn postfix_expr_test() {
+    let ast = parse(
+      "
+    a += a++ + ++a
+    ",
+    );
+    let mut symtab = SymTab::new();
+    symtab.prog(&ast).unwrap();
+
+    let mut codegen = Codegen::new(symtab);
+    codegen.prog(&ast).ok();
+
+    let insts = "
+    GETTABUP{ A: 3, B: 0, C: 256 },
+    MOVE{ A: 2, B: 3, C: 0 },
+    GETTABUP{ A: 5, B: 0, C: 256 },
+    ADD{ A: 6, B: 5, C: 257 },
+    SETTABUP{ A: 0, B: 256, C: 6 },
+    GETTABUP{ A: 4, B: 0, C: 256 },
+    ADD{ A: 5, B: 4, C: 257 },
+    SETTABUP{ A: 0, B: 256, C: 5 },
+    MOVE{ A: 3, B: 5, C: 0 },
+    ADD{ A: 1, B: 2, C: 3 },
+    GETTABUP{ A: 2, B: 0, C: 256 },
+    ADD{ A: 3, B: 2, C: 1 },
+    SETTABUP{ A: 0, B: 256, C: 3 }";
     assert_code_eq(insts, &codegen.fs_ref().tpl.code);
   }
 }

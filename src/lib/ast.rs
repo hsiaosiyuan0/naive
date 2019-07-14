@@ -400,7 +400,7 @@ pub struct SeqExpr {
   pub exprs: Vec<Expr>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Expr {
   Primary(Rc<PrimaryExpr>),
   Member(Rc<MemberExpr>),

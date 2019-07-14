@@ -672,7 +672,7 @@ impl<'a> Parser<'a> {
 
   fn expr(&mut self, not_in: bool) -> Result<Expr, ParsingError> {
     let mut loc = self.loc();
-    let first = match self.assign_expr(not_in) {
+    let first = match self.assign_expr(not_in, None) {
       Ok(expr) => expr,
       Err(e) => return Err(e),
     };
@@ -689,7 +689,7 @@ impl<'a> Parser<'a> {
 
     let mut seq: Vec<Expr> = vec![first];
     loop {
-      let expr = match self.assign_expr(not_in) {
+      let expr = match self.assign_expr(not_in, None) {
         Ok(expr) => expr,
         Err(e) => return Err(e),
       };
@@ -705,27 +705,39 @@ impl<'a> Parser<'a> {
     Ok(seq.into())
   }
 
-  fn assign_expr(&mut self, not_in: bool) -> Result<Expr, ParsingError> {
+  fn ahead_is_symbol_assign(&mut self) -> bool {
+    match self.lexer.peek() {
+      Err(_) => false,
+      Ok(tok) => tok.is_symbol_assign(),
+    }
+  }
+
+  fn assign_expr(&mut self, not_in: bool, left: Option<Expr>) -> Result<Expr, ParsingError> {
     let mut loc = self.loc();
-    let lhs = match self.cond_expr(not_in) {
+    let lhs = match left {
+      Some(expr) => expr,
+      _ => match self.cond_expr(not_in) {
+        Ok(expr) => expr,
+        Err(e) => return Err(e),
+      },
+    };
+
+    if !self.ahead_is_symbol_assign() {
+      return Ok(lhs);
+    }
+    let op = self.lexer.next().ok().unwrap().deref().clone();
+
+    let mut rhs = match self.cond_expr(not_in) {
       Ok(expr) => expr,
       Err(e) => return Err(e),
     };
 
-    let op = self.lexer.peek();
-    if op.is_err() {
-      return Ok(lhs);
+    if self.ahead_is_symbol_assign() {
+      rhs = match self.assign_expr(not_in, Some(rhs)) {
+        Ok(expr) => expr,
+        Err(e) => return Err(e),
+      };
     }
-    let op = op.ok().unwrap().deref().clone();
-    if !op.is_symbol_assign() {
-      return Ok(lhs);
-    }
-    self.lexer.advance();
-
-    let rhs = match self.cond_expr(not_in) {
-      Ok(expr) => expr,
-      Err(e) => return Err(e),
-    };
 
     loc.end = self.pos();
     let assign = AssignExpr {
@@ -1099,7 +1111,6 @@ impl<'a> Parser<'a> {
         } else if tok.is_keyword_kind(Keyword::Function) {
           self.fn_expr(&tok)
         } else {
-          println!("{:#?}", tok);
           Err(ParserError::at_tok(&tok).into())
         }
       }
@@ -1236,7 +1247,7 @@ impl<'a> Parser<'a> {
       }
       Err(e) => return Err(e.into()),
     }
-    let value = match self.assign_expr(false) {
+    let value = match self.assign_expr(false, None) {
       Ok(expr) => expr,
       Err(e) => return Err(e.into()),
     };
@@ -1273,7 +1284,7 @@ impl<'a> Parser<'a> {
               }
             }
           } else {
-            match self.assign_expr(false) {
+            match self.assign_expr(false, None) {
               Ok(expr) => ret.value.push(expr),
               Err(e) => return Err(e.into()),
             };
