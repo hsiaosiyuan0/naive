@@ -70,7 +70,7 @@ pub struct Local {
 }
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
-pub enum InstType {
+pub enum OpMode {
   ABC,
   ABx,
   AsBx,
@@ -168,7 +168,7 @@ impl fmt::Debug for Inst {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     let op = OpCode::from_u32(self.op());
     match op.mode() {
-      InstType::ABC => write!(
+      OpMode::ABC => write!(
         f,
         "{:#?}{{ A: {}, B: {}, C: {} }}",
         op,
@@ -176,8 +176,8 @@ impl fmt::Debug for Inst {
         self.b(),
         self.c()
       ),
-      InstType::ABx => write!(f, "{:#?}{{ A: {}, Bx: {} }}", op, self.a(), self.bx()),
-      InstType::AsBx => write!(f, "{:#?}{{ A: {}, sBx: {} }}", op, self.a(), self.sbx()),
+      OpMode::ABx => write!(f, "{:#?}{{ A: {}, Bx: {} }}", op, self.a(), self.bx()),
+      OpMode::AsBx => write!(f, "{:#?}{{ A: {}, sBx: {} }}", op, self.a(), self.sbx()),
     }
   }
 }
@@ -214,7 +214,7 @@ pub struct Chunk {
   pub top_fun_tpl: FunTpl,
 }
 
-#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+#[derive(Debug, Eq, PartialEq, Copy, Clone, Hash)]
 pub enum OpCode {
   MOVE,
   LOADK,
@@ -237,13 +237,11 @@ pub enum OpCode {
   MOD,
   DIV,
   LT,
-  GT,
   LE,
-  GE,
   EQ,
   EQS,
-  AND,
-  OR,
+  TEST,
+  TESTSET,
   NOT,
   BITAND,
   BITOR,
@@ -252,69 +250,67 @@ pub enum OpCode {
   SHL,
   SAR,
   SHR,
-  NOTEQ,
-  NOTEQS,
   CLOSURE,
 }
 
-static mut OPCODE_VAL_NAME: Option<Vec<&'static str>> = None;
-static mut OPCODE_VAL_MODE: Option<Vec<u8>> = None;
+static mut OPCODE_NAME: Option<HashMap<OpCode, &'static str>> = None;
+static mut OPCODE_MODE: Option<HashMap<OpCode, OpMode>> = None;
 
 macro_rules! gen_opcode_map {
-  ($($id:expr => $name:expr, $mode:expr)*) => {
+  ($($op:expr => $name:expr, $mode:expr)*) => {
     {
-      let mut id_name = vec![];
-      let mut id_mode = vec![];
+      let mut op_name = HashMap::new();
+      let mut op_mode = HashMap::new();
       $(
-        id_name.push($name);
-        id_mode.push($mode);
+        op_name.insert($op, $name);
+        op_mode.insert($op, $mode);
       )*
-      (Some(id_name), Some(id_mode))
+      (Some(op_name), Some(op_mode))
     }
   };
 }
 
 fn init_opcodes() {
-  let (id_name, id_mode) = gen_opcode_map! {
-    MOVE => "MOVE", 0
-    LOADK => "LOADK", 1
-    LOADKX => "LOADKX", 1
-    LOADBOO => "LOADBOO", 0
-    LOADNUL => "LOADNUL", 0
-    LOADUNDEF => "LOADUNDEF", 0
-    GETUPVAL => "GETUPVAL", 0
-    GETTABUP => "GETTABUP", 0
-    SETTABUP => "SETTABUP", 0
-    SETUPVAL => "SETUPVAL", 0
-    SETTABLE => "SETTABLE", 0
-    NEWTABLE => "NEWTABLE", 0
-    NEWARRAY => "NEWARRAY", 0
-    INITARRAY => "INITARRAY", 0
-    THIS => "THIS", 0
-    ADD => "ADD", 0
-    SUB => "SUB", 0
-    MUL => "MUL", 0
-    MOD => "MOD", 0
-    DIV => "DIV", 0
-    LT => "LT", 0
-    LE => "LE", 0
-    EQ => "EQ", 0
-    EQS => "EQS", 0
-    ANT => "ANT", 0
-    OR => "OR", 0
-    NOT => "NOT", 0
-    BITAND => "BITAND", 0
-    BITOR => "BITOR", 0
-    BITXOR => "BITXOR", 0
-    BITNOT => "BITNOT", 0
-    SHL => "SHL", 0
-    SAR => "SAR", 0
-    SHR => "SHR", 0
-    CLOSURE => "CLOSURE", 0
+  let (op_name, op_mode) = gen_opcode_map! {
+    OpCode::MOVE => "MOVE", OpMode::ABC
+    OpCode::LOADK => "LOADK", OpMode::ABx
+    OpCode::LOADKX => "LOADKX", OpMode::ABx
+    OpCode::LOADBOO => "LOADBOO", OpMode::ABC
+    OpCode::LOADNUL => "LOADNUL", OpMode::ABC
+    OpCode::LOADUNDEF => "LOADUNDEF", OpMode::ABC
+    OpCode::GETUPVAL => "GETUPVAL", OpMode::ABC
+    OpCode::GETTABUP => "GETTABUP", OpMode::ABC
+    OpCode::SETTABUP => "SETTABUP", OpMode::ABC
+    OpCode::SETUPVAL => "SETUPVAL", OpMode::ABC
+    OpCode::SETTABLE => "SETTABLE", OpMode::ABC
+    OpCode::NEWTABLE => "NEWTABLE", OpMode::ABC
+    OpCode::NEWARRAY => "NEWARRAY", OpMode::ABC
+    OpCode::INITARRAY => "INITARRAY", OpMode::ABC
+    OpCode::THIS => "THIS", OpMode::ABC
+    OpCode::ADD => "ADD", OpMode::ABC
+    OpCode::SUB => "SUB", OpMode::ABC
+    OpCode::MUL => "MUL", OpMode::ABC
+    OpCode::MOD => "MOD", OpMode::ABC
+    OpCode::DIV => "DIV", OpMode::ABC
+    OpCode::LT => "LT", OpMode::ABC
+    OpCode::LE => "LE", OpMode::ABC
+    OpCode::EQ => "EQ", OpMode::ABC
+    OpCode::EQS => "EQS", OpMode::ABC
+    OpCode::TEST => "TEST", OpMode::ABC
+    OpCode::TESTSET => "TESTSET", OpMode::ABC
+    OpCode::NOT => "NOT", OpMode::ABC
+    OpCode::BITAND => "BITAND", OpMode::ABC
+    OpCode::BITOR => "BITOR", OpMode::ABC
+    OpCode::BITXOR => "BITXOR", OpMode::ABC
+    OpCode::BITNOT => "BITNOT", OpMode::ABC
+    OpCode::SHL => "SHL", OpMode::ABC
+    OpCode::SAR => "SAR", OpMode::ABC
+    OpCode::SHR => "SHR", OpMode::ABC
+    OpCode::CLOSURE => "CLOSURE", OpMode::ABC
   };
   unsafe {
-    OPCODE_VAL_NAME = id_name;
-    OPCODE_VAL_MODE = id_mode;
+    OPCODE_NAME = op_name;
+    OPCODE_MODE = op_mode;
   }
 }
 
@@ -325,15 +321,21 @@ pub fn init_opcode_data() {
   });
 }
 
+pub fn op_to_name(op: &OpCode) -> &'static str {
+  unsafe { OPCODE_NAME.as_ref().unwrap().get(op).unwrap() }
+}
+
+pub fn op_to_mode(op: &OpCode) -> &'static OpMode {
+  unsafe { OPCODE_MODE.as_ref().unwrap().get(op).unwrap() }
+}
+
 impl OpCode {
   pub fn from_u32(x: u32) -> Self {
     unsafe { transmute(x as u8) }
   }
 
-  pub fn mode(&self) -> InstType {
-    let idx = *self as usize;
-    let mode = unsafe { OPCODE_VAL_MODE.as_ref().unwrap().get(idx).unwrap() };
-    unsafe { transmute((*mode) as u8) }
+  pub fn mode(&self) -> OpMode {
+    *op_to_mode(self)
   }
 }
 
@@ -369,7 +371,7 @@ mod chunk_tests {
   fn opcode_test() {
     init_opcodes();
 
-    assert_eq!(InstType::ABC, OpCode::from_u32(0).mode());
-    assert_eq!(InstType::ABx, OpCode::from_u32(1).mode());
+    assert_eq!(OpMode::ABC, OpCode::from_u32(0).mode());
+    assert_eq!(OpMode::ABx, OpCode::from_u32(1).mode());
   }
 }

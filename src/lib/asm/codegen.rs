@@ -613,6 +613,7 @@ impl AstVisitor<(), CodegenError> for Codegen {
         lb2.set_b(if load_true_first { 0 } else { 1 });
         fs.push_inst(lb2);
       }
+      Symbol::And => {}
       _ => (),
     }
 
@@ -859,6 +860,8 @@ fn init_symbol_opcode_map() {
   map.insert(Symbol::SHL, OpCode::SHL);
   map.insert(Symbol::SAR, OpCode::SAR);
   map.insert(Symbol::SHR, OpCode::SHR);
+  map.insert(Symbol::And, OpCode::TEST);
+  map.insert(Symbol::Or, OpCode::TESTSET);
   unsafe {
     SYMBOL_OPCODE_MAP = Some(map);
   }
