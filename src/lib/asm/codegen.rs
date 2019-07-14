@@ -6,6 +6,7 @@ use crate::visitor::AstVisitor;
 use std::cmp::min;
 use std::collections::{HashMap, HashSet};
 use std::ptr::{drop_in_place, null_mut};
+use std::sync::Once;
 
 pub type FnStatePtr = *mut FnState;
 
@@ -378,6 +379,13 @@ fn hoist(stmts: &Vec<Stmt>) -> Vec<Stmt> {
 
 impl AstVisitor<(), CodegenError> for Codegen {
   fn prog(&mut self, prog: &Prog) -> Result<(), CodegenError> {
+    unsafe {
+      if !IS_MOD_INITIALIZED {
+        return Err(CodegenError::new(
+          "`init_codegen_data` should be called before this method",
+        ));
+      }
+    }
     // we don't use `self.declare_bindings()` here since we cannot
     // declare values in root scope, the values in root scope just
     // alias of the fields of the global object
@@ -526,32 +534,14 @@ impl AstVisitor<(), CodegenError> for Codegen {
 
   fn binary_expr(&mut self, expr: &BinaryExpr) -> Result<(), CodegenError> {
     let fs = self.fs_ref();
-    let op = expr.op.symbol_data().kind;
+    let op_s = expr.op.symbol_data().kind;
 
     let mut inst = Inst::new();
     let res_reg = fs.pop_res_reg();
     inst.set_a(res_reg);
-    // TODO: add map to map symbol to opcode
-    match op {
-      Symbol::Add => inst.set_op(OpCode::ADD),
-      Symbol::Sub => inst.set_op(OpCode::SUB),
-      Symbol::Mul => inst.set_op(OpCode::MUL),
-      Symbol::Mod => inst.set_op(OpCode::MOD),
-      Symbol::Div => inst.set_op(OpCode::DIV),
-      Symbol::LT => inst.set_op(OpCode::LT),
-      Symbol::GT => inst.set_op(OpCode::LT),
-      Symbol::LE => inst.set_op(OpCode::LE),
-      Symbol::GE => inst.set_op(OpCode::LE),
-      Symbol::Eq => inst.set_op(OpCode::EQ),
-      Symbol::NotEq => inst.set_op(OpCode::EQ),
-      Symbol::EqStrict => inst.set_op(OpCode::EQS),
-      Symbol::NotEqStrict => inst.set_op(OpCode::EQS),
-      Symbol::BitAnd => inst.set_op(OpCode::BITAND),
-      Symbol::BitOr => inst.set_op(OpCode::BITOR),
-      Symbol::BitNot => inst.set_op(OpCode::BITNOT),
-      Symbol::SHL => inst.set_op(OpCode::SHL),
-      Symbol::SAR => inst.set_op(OpCode::SAR),
-      Symbol::SHR => inst.set_op(OpCode::SHR),
+
+    match symbol_to_opcode(op_s) {
+      Some(op) => inst.set_op(*op),
       _ => unimplemented!(),
     }
 
@@ -581,7 +571,7 @@ impl AstVisitor<(), CodegenError> for Codegen {
     fs.push_inst(inst);
     fs.free_regs(&tmp_regs);
 
-    match op {
+    match op_s {
       Symbol::LT
       | Symbol::LE
       | Symbol::Eq
@@ -605,7 +595,7 @@ impl AstVisitor<(), CodegenError> for Codegen {
         // routine
         fs.tpl.code.last_mut().unwrap().set_a(1);
 
-        let load_true_first = match op {
+        let load_true_first = match op_s {
           Symbol::LT | Symbol::LE | Symbol::Eq | Symbol::EqStrict => true,
           _ => false,
         };
@@ -842,6 +832,52 @@ impl AstVisitor<(), CodegenError> for Codegen {
   }
 }
 
+static mut SYMBOL_OPCODE_MAP: Option<HashMap<Symbol, OpCode>> = None;
+
+fn symbol_to_opcode(s: Symbol) -> Option<&'static OpCode> {
+  unsafe { SYMBOL_OPCODE_MAP.as_ref().unwrap().get(&s) }
+}
+
+fn init_symbol_opcode_map() {
+  let mut map = HashMap::new();
+  map.insert(Symbol::Add, OpCode::ADD);
+  map.insert(Symbol::Sub, OpCode::SUB);
+  map.insert(Symbol::Mul, OpCode::MUL);
+  map.insert(Symbol::Mod, OpCode::MOD);
+  map.insert(Symbol::Div, OpCode::DIV);
+  map.insert(Symbol::LT, OpCode::LT);
+  map.insert(Symbol::GT, OpCode::LT);
+  map.insert(Symbol::LE, OpCode::LE);
+  map.insert(Symbol::GE, OpCode::LE);
+  map.insert(Symbol::Eq, OpCode::EQ);
+  map.insert(Symbol::NotEq, OpCode::EQ);
+  map.insert(Symbol::EqStrict, OpCode::EQS);
+  map.insert(Symbol::NotEqStrict, OpCode::EQS);
+  map.insert(Symbol::BitAnd, OpCode::BITAND);
+  map.insert(Symbol::BitOr, OpCode::BITOR);
+  map.insert(Symbol::BitNot, OpCode::BITNOT);
+  map.insert(Symbol::SHL, OpCode::SHL);
+  map.insert(Symbol::SAR, OpCode::SAR);
+  map.insert(Symbol::SHR, OpCode::SHR);
+  unsafe {
+    SYMBOL_OPCODE_MAP = Some(map);
+  }
+}
+
+static mut IS_MOD_INITIALIZED: bool = false;
+
+static INIT_CODEGEN_DATA_ONCE: Once = Once::new();
+pub fn init_codegen_data() {
+  INIT_CODEGEN_DATA_ONCE.call_once(|| {
+    init_token_data();
+    init_opcode_data();
+    init_symbol_opcode_map();
+    unsafe {
+      IS_MOD_INITIALIZED = true;
+    }
+  });
+}
+
 #[cfg(test)]
 mod codegen_tests {
   use super::*;
@@ -851,8 +887,7 @@ mod codegen_tests {
   use crate::token::*;
 
   fn parse(code: &str) -> Prog {
-    init_token_data();
-    init_opcode_data();
+    init_codegen_data();
 
     let code = String::from(code);
     let src = Source::new(&code);
