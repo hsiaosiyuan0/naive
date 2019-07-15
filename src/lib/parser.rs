@@ -6,11 +6,30 @@ use std::rc::Rc;
 
 pub struct Parser<'a> {
   pub lexer: &'a mut Lexer<'a>,
+  in_loop_flags: Vec<bool>,
 }
 
 impl<'a> Parser<'a> {
   pub fn new(lexer: &'a mut Lexer<'a>) -> Self {
-    Parser { lexer }
+    Parser {
+      lexer,
+      in_loop_flags: vec![],
+    }
+  }
+
+  fn enter_loop(&mut self) {
+    self.in_loop_flags.push(true);
+  }
+
+  fn leave_loop(&mut self) {
+    self.in_loop_flags.pop();
+  }
+
+  fn in_loop(&self) -> bool {
+    match self.in_loop_flags.last() {
+      Some(_) => true,
+      _ => false,
+    }
   }
 
   pub fn prog(&mut self) -> Result<Prog, ParsingError> {
@@ -161,6 +180,7 @@ impl<'a> Parser<'a> {
   }
 
   fn switch_stmt(&mut self) -> Result<Stmt, ParsingError> {
+    self.enter_loop();
     let mut loc = self.loc();
     self.lexer.advance();
 
@@ -214,6 +234,7 @@ impl<'a> Parser<'a> {
       discrim,
       cases,
     };
+    self.leave_loop();
     Ok(switch.into())
   }
 
@@ -336,6 +357,10 @@ impl<'a> Parser<'a> {
   }
 
   fn break_stmt(&mut self) -> Result<Stmt, ParsingError> {
+    if !self.in_loop() {
+      return Err(ParserError::at(&self.loc()).into());
+    }
+
     let mut loc = self.loc();
     self.lexer.advance();
     loc.end = self.pos();
@@ -346,6 +371,10 @@ impl<'a> Parser<'a> {
   }
 
   fn cont_stmt(&mut self) -> Result<Stmt, ParsingError> {
+    if !self.in_loop() {
+      return Err(ParserError::at(&self.loc()).into());
+    }
+
     let mut loc = self.loc();
     self.lexer.advance();
     loc.end = self.pos();
@@ -356,6 +385,7 @@ impl<'a> Parser<'a> {
   }
 
   fn while_stmt(&mut self) -> Result<Stmt, ParsingError> {
+    self.enter_loop();
     let mut loc = self.loc();
     self.lexer.advance();
 
@@ -381,10 +411,12 @@ impl<'a> Parser<'a> {
 
     loc.end = self.pos();
     let stmt = WhileStmt { loc, test, body };
+    self.leave_loop();
     Ok(stmt.into())
   }
 
   fn do_while(&mut self) -> Result<Stmt, ParsingError> {
+    self.enter_loop();
     let mut loc = self.loc();
     self.lexer.advance();
 
@@ -415,10 +447,12 @@ impl<'a> Parser<'a> {
 
     loc.end = self.pos();
     let stmt = DoWhileStmt { loc, test, body };
+    self.leave_loop();
     Ok(stmt.into())
   }
 
   fn for_stmt(&mut self) -> Result<Stmt, ParsingError> {
+    self.enter_loop();
     let mut loc = self.loc();
     self.lexer.advance();
 
@@ -475,6 +509,7 @@ impl<'a> Parser<'a> {
       };
 
       loc.end = self.pos();
+      self.leave_loop();
       return Ok(
         ForInStmt {
           loc,
@@ -1757,20 +1792,26 @@ mod parser_tests {
     init_token_data();
 
     let code = String::from(
-      "continue; return
-    break",
+      "while(true) { continue; return
+    break}",
     );
     let src = Source::new(&code);
     let mut lexer = Lexer::new(src);
     let mut parser = Parser::new(&mut lexer);
 
     let node = parser.stmt().ok().unwrap();
+    assert!(node.is_while_stmt());
+
+    let stmt = node.while_stmt();
+    let body = stmt.body.block();
+
+    let node = &body.body[0];
     assert!(node.is_cont());
 
-    let node = parser.stmt().ok().unwrap();
+    let node = &body.body[1];
     assert!(node.is_ret());
 
-    let node = parser.stmt().ok().unwrap();
+    let node = &body.body[2];
     assert!(node.is_break());
   }
 

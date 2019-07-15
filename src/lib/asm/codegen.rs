@@ -17,6 +17,16 @@ pub fn as_fn_state(ptr: FnStatePtr) -> &'static mut FnState {
 pub const ENV_NAME: &'static str = "__ENV__";
 
 #[derive(Debug)]
+pub struct LoopInfo {
+  start: i32,
+  end: i32,
+  // index of break instructions in this loop
+  brk: Vec<i32>,
+  // index of continue instructions in this loop
+  cont: Vec<i32>,
+}
+
+#[derive(Debug)]
 pub struct FnState {
   id: usize,
   tpl: FunTpl,
@@ -26,6 +36,7 @@ pub struct FnState {
   subs: Vec<FnStatePtr>,
   free_reg: u32,
   res_reg: Vec<u32>,
+  loop_stack: Vec<LoopInfo>,
 }
 
 impl FnState {
@@ -39,6 +50,7 @@ impl FnState {
       subs: vec![],
       free_reg: 0,
       res_reg: vec![],
+      loop_stack: vec![],
     }))
   }
 
@@ -233,6 +245,54 @@ impl FnState {
 
   fn get_sub(&mut self, idx: usize) -> &'static FnState {
     as_fn_state(self.subs[0])
+  }
+
+  fn enter_loop(&mut self) {
+    self.loop_stack.push(LoopInfo {
+      start: self.code_len(),
+      end: 0,
+      brk: vec![],
+      cont: vec![],
+    })
+  }
+
+  fn fin_brk(&mut self) {
+    if self.loop_stack.last().is_none() {
+      return;
+    }
+    let info = self.loop_stack.last().unwrap();
+    let end = info.end;
+    for brk_idx in &info.brk {
+      let jmp = self.get_inst(*brk_idx);
+      let jmp_pc = jmp.sbx();
+      let ptr = jmp as *const Inst as *mut Inst;
+      unsafe {
+        (*ptr).set_sbx(end - jmp_pc);
+      }
+    }
+  }
+
+  fn fin_cont(&mut self) {
+    if self.loop_stack.last().is_none() {
+      return;
+    }
+    let info = self.loop_stack.last().unwrap();
+    let start = info.start;
+    for cont_idx in &info.cont {
+      let jmp = self.get_inst(*cont_idx);
+      let jmp_pc = jmp.sbx();
+      let ptr = jmp as *const Inst as *mut Inst;
+      unsafe {
+        (*ptr).set_sbx(start - jmp_pc);
+      }
+    }
+  }
+
+  fn leave_loop(&mut self) {
+    self.loop_stack.last_mut().unwrap().end = self.code_len();
+    self.fin_brk();
+    self.fin_cont();
+    self.loop_stack.pop();
   }
 }
 
@@ -524,6 +584,7 @@ impl AstVisitor<(), CodegenError> for Codegen {
 
   fn for_stmt(&mut self, stmt: &ForStmt) -> Result<(), CodegenError> {
     let fs = self.fs_ref();
+    fs.enter_loop();
 
     if let Some(init) = &stmt.init {
       match init {
@@ -533,6 +594,7 @@ impl AstVisitor<(), CodegenError> for Codegen {
     }
 
     let s_len = fs.code_len();
+    fs.loop_stack.last_mut().unwrap().start = s_len;
 
     let tr = fs.take_reg();
     if let Some(test) = &stmt.test {
@@ -568,7 +630,7 @@ impl AstVisitor<(), CodegenError> for Codegen {
 
     let e_len = fs.code_len();
     fs.fin_jmp_sbx(jmp2, s_len - e_len);
-
+    fs.leave_loop();
     Ok(())
   }
 
@@ -578,6 +640,7 @@ impl AstVisitor<(), CodegenError> for Codegen {
 
   fn do_while_stmt(&mut self, stmt: &DoWhileStmt) -> Result<(), CodegenError> {
     let fs = self.fs_ref();
+    fs.enter_loop();
 
     let s_len = fs.code_len();
     self.stmt(&stmt.body).ok();
@@ -597,12 +660,13 @@ impl AstVisitor<(), CodegenError> for Codegen {
     let jmp1 = fs.push_jmp();
     let e_len = fs.code_len();
     fs.fin_jmp_sbx(jmp1, s_len - e_len);
-
+    fs.leave_loop();
     Ok(())
   }
 
   fn while_stmt(&mut self, stmt: &WhileStmt) -> Result<(), CodegenError> {
     let fs = self.fs_ref();
+    fs.enter_loop();
 
     let s_len = fs.code_len();
 
@@ -627,16 +691,30 @@ impl AstVisitor<(), CodegenError> for Codegen {
 
     let e_len = fs.code_len();
     fs.fin_jmp_sbx(jmp2, s_len - e_len);
-
+    fs.leave_loop();
     Ok(())
   }
 
   fn cont_stmt(&mut self, stmt: &ContStmt) -> Result<(), CodegenError> {
-    unimplemented!()
+    let fs = self.fs_ref();
+    let len = fs.code_len();
+    let mut inst = Inst::new();
+    inst.set_op(OpCode::JMP);
+    inst.set_sbx(len + 1);
+    fs.push_inst(inst);
+    fs.loop_stack.last_mut().unwrap().cont.push(len);
+    Ok(())
   }
 
   fn break_stmt(&mut self, stmt: &BreakStmt) -> Result<(), CodegenError> {
-    unimplemented!()
+    let fs = self.fs_ref();
+    let len = fs.code_len();
+    let mut inst = Inst::new();
+    inst.set_op(OpCode::JMP);
+    inst.set_sbx(len + 1);
+    fs.push_inst(inst);
+    fs.loop_stack.last_mut().unwrap().brk.push(len);
+    Ok(())
   }
 
   fn ret_stmt(&mut self, stmt: &ReturnStmt) -> Result<(), CodegenError> {
@@ -2080,6 +2158,99 @@ mod codegen_tests {
     TEST{ A: 0, B: 0, C: 0 },
     JMP{ A: 0, sBx: -10 },
     GETTABUP{ A: 0, B: 0, C: 256 },";
+    assert_code_eq(insts, &codegen.fs_ref().tpl.code);
+  }
+
+  #[test]
+  fn break_stmt_test() {
+    let ast = parse(
+      "
+    for(;;) {
+      for(;;) {
+        if(a) { break }
+        1
+      }
+      2
+      if(b) break
+      3
+    }
+    ",
+    );
+    let mut symtab = SymTab::new();
+    symtab.prog(&ast).unwrap();
+
+    let mut codegen = Codegen::new(symtab);
+    codegen.prog(&ast).ok();
+
+    let insts = "
+    LOADBOO{ A: 0, B: 1, C: 0 },
+    TEST{ A: 0, B: 0, C: 0 },
+    JMP{ A: 0, sBx: 16 },
+    LOADBOO{ A: 0, B: 1, C: 0 },
+    TEST{ A: 0, B: 0, C: 0 },
+    JMP{ A: 0, sBx: 6 },
+    GETTABUP{ A: 0, B: 0, C: 256 },
+    TEST{ A: 0, B: 0, C: 0 },
+    JMP{ A: 0, sBx: 1 },
+    JMP{ A: 0, sBx: 2 },
+    LOADK{ A: 0, Bx: 257 },
+    JMP{ A: 0, sBx: -9 },
+    LOADK{ A: 0, Bx: 258 },
+    GETTABUP{ A: 0, B: 0, C: 259 },
+    TEST{ A: 0, B: 0, C: 0 },
+    JMP{ A: 0, sBx: 1 },
+    JMP{ A: 0, sBx: 2 },
+    LOADK{ A: 0, Bx: 260 },
+    JMP{ A: 0, sBx: -19 },";
+    assert_code_eq(insts, &codegen.fs_ref().tpl.code);
+  }
+
+  #[test]
+  fn cont_stmt_test() {
+    let ast = parse(
+      "
+    for(b;;) {
+      for(;;) {
+        if(a) { continue }
+        else break
+      }
+      1
+      if(b) continue
+      else break
+    }
+    2
+    ",
+    );
+    let mut symtab = SymTab::new();
+    symtab.prog(&ast).unwrap();
+
+    let mut codegen = Codegen::new(symtab);
+    codegen.prog(&ast).ok();
+
+    let insts = "
+    GETTABUP{ A: 0, B: 0, C: 256 },
+    LOADBOO{ A: 0, B: 1, C: 0 },
+    TEST{ A: 0, B: 0, C: 0 },
+    JMP{ A: 0, sBx: 18 },
+    LOADBOO{ A: 0, B: 1, C: 0 },
+    TEST{ A: 0, B: 0, C: 0 },
+    JMP{ A: 0, sBx: 7 },
+    GETTABUP{ A: 0, B: 0, C: 257 },
+    TEST{ A: 0, B: 0, C: 0 },
+    JMP{ A: 0, sBx: 2 },
+    JMP{ A: 0, sBx: -7 },
+    JMP{ A: 0, sBx: 1 },
+    JMP{ A: 0, sBx: 1 },
+    JMP{ A: 0, sBx: -10 },
+    LOADK{ A: 0, Bx: 258 },
+    GETTABUP{ A: 0, B: 0, C: 256 },
+    TEST{ A: 0, B: 0, C: 0 },
+    JMP{ A: 0, sBx: 2 },
+    JMP{ A: 0, sBx: -18 },
+    JMP{ A: 0, sBx: 1 },
+    JMP{ A: 0, sBx: 1 },
+    JMP{ A: 0, sBx: -21 },
+    LOADK{ A: 0, Bx: 259 },";
     assert_code_eq(insts, &codegen.fs_ref().tpl.code);
   }
 }
