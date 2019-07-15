@@ -434,7 +434,7 @@ impl<'a> Parser<'a> {
         Ok(expr) => Some(expr),
         Err(e) => return Err(e),
       };
-    } else {
+    } else if !self.ahead_is_symbol(Symbol::Semi) {
       left = match self.expr(true) {
         Ok(expr) => Some(expr),
         Err(e) => return Err(e),
@@ -443,16 +443,16 @@ impl<'a> Parser<'a> {
 
     let is_for_in = self.ahead_is_keyword(Keyword::In);
 
-    let for_in_left;
+    let mut for_in_left = None;
     if first.is_some() {
       let first = first.unwrap();
       if is_for_in && first.decs.len() > 1 {
         return Err(ParserError::at(&first.loc).into());
       }
-      for_in_left = ForFirst::VarDec(first);
+      for_in_left = Some(ForFirst::VarDec(first));
     } else if left.is_some() {
-      for_in_left = ForFirst::Expr(left.unwrap());
-    } else {
+      for_in_left = Some(ForFirst::Expr(left.unwrap()));
+    } else if is_for_in {
       return Err(ParserError::at(&self.loc()).into());
     }
 
@@ -478,7 +478,7 @@ impl<'a> Parser<'a> {
       return Ok(
         ForInStmt {
           loc,
-          left: for_in_left,
+          left: for_in_left.unwrap(),
           right,
           body,
         }
@@ -492,21 +492,19 @@ impl<'a> Parser<'a> {
     self.lexer.advance();
 
     let test = match self.ahead_is_symbol(Symbol::Semi) {
-      true => {
-        self.lexer.advance();
-        None
-      }
+      true => None,
       false => match self.expr(false) {
         Ok(expr) => Some(expr),
         Err(e) => return Err(e),
       },
     };
+    if !self.ahead_is_symbol(Symbol::Semi) {
+      return Err(ParserError::at(&self.loc()).into());
+    }
+    self.lexer.advance();
 
-    let update = match self.ahead_is_symbol(Symbol::Semi) {
-      true => {
-        self.lexer.advance();
-        None
-      }
+    let update = match self.ahead_is_symbol(Symbol::ParenR) {
+      true => None,
       false => match self.expr(false) {
         Ok(expr) => Some(expr),
         Err(e) => return Err(e),
@@ -527,7 +525,7 @@ impl<'a> Parser<'a> {
     Ok(
       ForStmt {
         loc,
-        init: Some(for_in_left),
+        init: for_in_left,
         test,
         update,
         body,
