@@ -94,10 +94,12 @@ impl AstVisitor<(), ()> for SymTab {
   }
 
   fn var_dec_stmt(&mut self, stmt: &VarDec) -> Result<(), ()> {
-    stmt
-      .decs
-      .iter()
-      .for_each(|dec| self.add_binding(dec.id.id().name.as_str()));
+    stmt.decs.iter().for_each(|dec| {
+      self.add_binding(dec.id.id().name.as_str());
+      if let Some(init) = &dec.init {
+        self.expr(init).ok();
+      }
+    });
     Ok(())
   }
 

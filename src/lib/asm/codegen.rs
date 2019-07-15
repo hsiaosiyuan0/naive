@@ -220,6 +220,10 @@ impl FnState {
       self.free_reg_to(mr);
     }
   }
+
+  fn get_sub(&mut self, idx: usize) -> &'static FnState {
+    as_fn_state(self.subs[0])
+  }
 }
 
 // convert const idx to RK
@@ -1154,8 +1158,24 @@ impl AstVisitor<(), CodegenError> for Codegen {
   }
 
   fn fn_expr(&mut self, expr: &FnDec) -> Result<(), CodegenError> {
-    // TODO::
-    unimplemented!()
+    let pfs = self.fs_ref();
+    let (res_reg, is_tmp) = pfs.pop_res_reg();
+    assert!(!is_tmp);
+
+    self.enter_fn_state();
+    let cfs = self.fs_ref();
+
+    let mut inst = Inst::new();
+    inst.set_op(OpCode::CLOSURE);
+    inst.set_a(res_reg);
+    inst.set_bx(cfs.idx_in_parent);
+    pfs.push_inst(inst);
+
+    self.declare_bindings();
+    self.stmt(&expr.body).ok();
+
+    self.leave_fn_state();
+    Ok(())
   }
 
   fn regexp_expr(&mut self, expr: &RegExpData) -> Result<(), CodegenError> {
@@ -1676,5 +1696,31 @@ mod codegen_tests {
     MOVE{ A: 1, B: 4, C: 0 },
     SETTABUP{ A: 0, B: 256, C: 1 },";
     assert_code_eq(insts, &codegen.fs_ref().tpl.code);
+  }
+
+  #[test]
+  fn fn_expr_test() {
+    let ast = parse(
+      "
+    a = function f() {
+      var a = function () {}
+    }
+    ",
+    );
+    let mut symtab = SymTab::new();
+    symtab.prog(&ast).unwrap();
+
+    let mut codegen = Codegen::new(symtab);
+    codegen.prog(&ast).ok();
+
+    let insts = "
+    CLOSURE{ A: 1, B: 0, C: 0 },
+    SETTABUP{ A: 0, B: 256, C: 1 },";
+    assert_code_eq(insts, &codegen.fs_ref().tpl.code);
+
+    let insts = "
+    LOADUNDEF{ A: 0, B: 0, C: 0 },
+    CLOSURE{ A: 0, B: 0, C: 0 },";
+    assert_code_eq(insts, &codegen.fs_ref().get_sub(0).tpl.code);
   }
 }
