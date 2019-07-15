@@ -483,6 +483,32 @@ impl AstVisitor<(), CodegenError> for Codegen {
   }
 
   fn if_stmt(&mut self, stmt: &IfStmt) -> Result<(), CodegenError> {
+    let fs = self.fs_ref();
+    let tr = fs.take_reg();
+    fs.push_res_reg(tr);
+    self.expr(&stmt.test).ok();
+
+    let mut test = Inst::new();
+    test.set_op(OpCode::TEST);
+    test.set_a(tr);
+    test.set_c(0);
+    fs.push_inst(test);
+    fs.free_reg_to(tr);
+
+    // jmp to false
+    let jmp1 = fs.push_jmp();
+    self.stmt(&stmt.cons).ok();
+
+    if let Some(alt) = &stmt.alt {
+      // jmp over false
+      let jmp2 = fs.push_jmp();
+      fs.fin_jmp(jmp1);
+      self.stmt(&alt).ok();
+      fs.fin_jmp(jmp2);
+    } else {
+      fs.fin_jmp(jmp1);
+    }
+
     Ok(())
   }
 
@@ -1179,7 +1205,6 @@ impl AstVisitor<(), CodegenError> for Codegen {
   }
 
   fn regexp_expr(&mut self, expr: &RegExpData) -> Result<(), CodegenError> {
-    // TODO::
     unimplemented!()
   }
 
@@ -1722,5 +1747,95 @@ mod codegen_tests {
     LOADUNDEF{ A: 0, B: 0, C: 0 },
     CLOSURE{ A: 0, B: 0, C: 0 },";
     assert_code_eq(insts, &codegen.fs_ref().get_sub(0).tpl.code);
+  }
+
+  #[test]
+  fn if_stmt_test() {
+    let ast = parse(
+      "
+    if (a) {
+      a
+      b
+    }
+    ",
+    );
+    let mut symtab = SymTab::new();
+    symtab.prog(&ast).unwrap();
+
+    let mut codegen = Codegen::new(symtab);
+    codegen.prog(&ast).ok();
+
+    let insts = "
+    GETTABUP{ A: 0, B: 0, C: 256 },
+    TEST{ A: 0, B: 0, C: 0 },
+    JMP{ A: 0, sBx: 2 },
+    GETTABUP{ A: 0, B: 0, C: 256 },
+    GETTABUP{ A: 0, B: 0, C: 257 },";
+    assert_code_eq(insts, &codegen.fs_ref().tpl.code);
+  }
+
+  #[test]
+  fn if_stmt_test2() {
+    let ast = parse(
+      "
+    if (a) {
+      a
+      b
+    } else {
+      c
+      d
+    }
+    ",
+    );
+    let mut symtab = SymTab::new();
+    symtab.prog(&ast).unwrap();
+
+    let mut codegen = Codegen::new(symtab);
+    codegen.prog(&ast).ok();
+
+    let insts = "
+    GETTABUP{ A: 0, B: 0, C: 256 },
+    TEST{ A: 0, B: 0, C: 0 },
+    JMP{ A: 0, sBx: 3 },
+    GETTABUP{ A: 0, B: 0, C: 256 },
+    GETTABUP{ A: 0, B: 0, C: 257 },
+    JMP{ A: 0, sBx: 2 },
+    GETTABUP{ A: 0, B: 0, C: 258 },
+    GETTABUP{ A: 0, B: 0, C: 259 },";
+    assert_code_eq(insts, &codegen.fs_ref().tpl.code);
+  }
+
+  #[test]
+  fn if_stmt_test3() {
+    let ast = parse(
+      "
+    if (a) {
+      a
+    } else if(b) {
+      c
+    } else { d }
+    f
+    ",
+    );
+    let mut symtab = SymTab::new();
+    symtab.prog(&ast).unwrap();
+
+    let mut codegen = Codegen::new(symtab);
+    codegen.prog(&ast).ok();
+
+    let insts = "
+    GETTABUP{ A: 0, B: 0, C: 256 },
+    TEST{ A: 0, B: 0, C: 0 },
+    JMP{ A: 0, sBx: 2 },
+    GETTABUP{ A: 0, B: 0, C: 256 },
+    JMP{ A: 0, sBx: 6 },
+    GETTABUP{ A: 0, B: 0, C: 257 },
+    TEST{ A: 0, B: 0, C: 0 },
+    JMP{ A: 0, sBx: 2 },
+    GETTABUP{ A: 0, B: 0, C: 258 },
+    JMP{ A: 0, sBx: 1 },
+    GETTABUP{ A: 0, B: 0, C: 259 },
+    GETTABUP{ A: 0, B: 0, C: 260 },";
+    assert_code_eq(insts, &codegen.fs_ref().tpl.code);
   }
 }
