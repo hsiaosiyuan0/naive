@@ -766,7 +766,7 @@ impl<'a> Parser<'a> {
     }
     self.lexer.advance();
 
-    let cons = match self.expr_op(None, 0, not_in) {
+    let cons = match self.assign_expr(not_in, None) {
       Ok(expr) => expr,
       Err(e) => return Err(e),
     };
@@ -779,7 +779,7 @@ impl<'a> Parser<'a> {
       Err(e) => return Err(e.into()),
     }
 
-    let alt = match self.expr_op(None, 0, not_in) {
+    let alt = match self.assign_expr(not_in, None) {
       Ok(expr) => expr,
       Err(e) => return Err(e),
     };

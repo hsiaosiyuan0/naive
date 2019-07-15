@@ -189,6 +189,24 @@ impl FnState {
     self.tpl.code.push(c);
   }
 
+  fn code_len(&self) -> i32 {
+    self.tpl.code.len() as i32
+  }
+
+  fn push_jmp(&mut self) -> i32 {
+    let mut jmp = Inst::new();
+    jmp.set_op(OpCode::JMP);
+    jmp.set_sbx(self.code_len() + 1);
+    self.push_inst(jmp);
+    self.code_len() - 1
+  }
+
+  fn fin_jmp(&mut self, idx: i32) {
+    let cl = self.code_len();
+    let jmp = self.tpl.code.get_mut(idx as usize).unwrap();
+    jmp.set_sbx(cl - jmp.sbx());
+  }
+
   fn free_reg_to(&mut self, r: u32) {
     self.free_reg = r;
   }
@@ -952,7 +970,38 @@ impl AstVisitor<(), CodegenError> for Codegen {
   }
 
   fn cond_expr(&mut self, expr: &CondExpr) -> Result<(), CodegenError> {
-    unimplemented!()
+    let fs = self.fs_ref();
+
+    let mut tmp_regs = vec![];
+    let (res_reg, is_tmp) = fs.pop_res_reg();
+    if is_tmp {
+      tmp_regs.push(res_reg)
+    }
+
+    let tr = fs.take_reg();
+    fs.push_res_reg(tr);
+    self.expr(&expr.test).ok();
+    tmp_regs.push(tr);
+
+    let mut test = Inst::new();
+    test.set_op(OpCode::TESTSET);
+    test.set_a(tr);
+    test.set_c(0);
+    fs.push_inst(test);
+
+    let jmp1 = fs.push_jmp();
+    fs.push_res_reg(res_reg);
+    self.expr(&expr.cons).ok();
+
+    let jmp2 = fs.push_jmp();
+    fs.fin_jmp(jmp1);
+
+    fs.push_res_reg(res_reg);
+    self.expr(&expr.alt).ok();
+    fs.fin_jmp(jmp2);
+
+    fs.free_regs(&tmp_regs);
+    Ok(())
   }
 
   fn seq_expr(&mut self, expr: &SeqExpr) -> Result<(), CodegenError> {
@@ -1105,10 +1154,12 @@ impl AstVisitor<(), CodegenError> for Codegen {
   }
 
   fn fn_expr(&mut self, expr: &FnDec) -> Result<(), CodegenError> {
+    // TODO::
     unimplemented!()
   }
 
   fn regexp_expr(&mut self, expr: &RegExpData) -> Result<(), CodegenError> {
+    // TODO::
     unimplemented!()
   }
 
@@ -1594,6 +1645,36 @@ mod codegen_tests {
     GETTABUP{ A: 2, B: 0, C: 256 },
     ADD{ A: 3, B: 2, C: 1 },
     SETTABUP{ A: 0, B: 256, C: 3 },";
+    assert_code_eq(insts, &codegen.fs_ref().tpl.code);
+  }
+
+  #[test]
+  fn cond_expr_test() {
+    let ast = parse(
+      "
+    a = a ? a +=1 : a +=2
+    ",
+    );
+    let mut symtab = SymTab::new();
+    symtab.prog(&ast).unwrap();
+
+    let mut codegen = Codegen::new(symtab);
+    codegen.prog(&ast).ok();
+
+    let insts = "
+    GETTABUP{ A: 2, B: 0, C: 256 },
+    TESTSET{ A: 2, B: 0, C: 0 },
+    JMP{ A: 0, sBx: 5 },
+    GETTABUP{ A: 3, B: 0, C: 256 },
+    ADD{ A: 4, B: 3, C: 257 },
+    SETTABUP{ A: 0, B: 256, C: 4 },
+    MOVE{ A: 1, B: 4, C: 0 },
+    JMP{ A: 0, sBx: 4 },
+    GETTABUP{ A: 3, B: 0, C: 256 },
+    ADD{ A: 4, B: 3, C: 258 },
+    SETTABUP{ A: 0, B: 256, C: 4 },
+    MOVE{ A: 1, B: 4, C: 0 },
+    SETTABUP{ A: 0, B: 256, C: 1 },";
     assert_code_eq(insts, &codegen.fs_ref().tpl.code);
   }
 }
