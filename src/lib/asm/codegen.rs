@@ -577,11 +577,58 @@ impl AstVisitor<(), CodegenError> for Codegen {
   }
 
   fn do_while_stmt(&mut self, stmt: &DoWhileStmt) -> Result<(), CodegenError> {
-    unimplemented!()
+    let fs = self.fs_ref();
+
+    let s_len = fs.code_len();
+    self.stmt(&stmt.body).ok();
+
+    let tr = fs.take_reg();
+    fs.push_res_reg(tr);
+    self.expr(&stmt.test).ok();
+    fs.free_reg_to(tr);
+
+    let mut t = Inst::new();
+    t.set_op(OpCode::TEST);
+    t.set_a(tr);
+    t.set_c(0);
+    fs.push_inst(t);
+
+    // jmp out of loop
+    let jmp1 = fs.push_jmp();
+    let e_len = fs.code_len();
+    fs.fin_jmp_sbx(jmp1, s_len - e_len);
+
+    Ok(())
   }
 
   fn while_stmt(&mut self, stmt: &WhileStmt) -> Result<(), CodegenError> {
-    unimplemented!()
+    let fs = self.fs_ref();
+
+    let s_len = fs.code_len();
+
+    let tr = fs.take_reg();
+    fs.push_res_reg(tr);
+    self.expr(&stmt.test).ok();
+    fs.free_reg_to(tr);
+
+    let mut t = Inst::new();
+    t.set_op(OpCode::TEST);
+    t.set_a(tr);
+    t.set_c(0);
+    fs.push_inst(t);
+
+    // jmp out of loop
+    let jmp1 = fs.push_jmp();
+    self.stmt(&stmt.body).ok();
+
+    // jmp to the loop start
+    let jmp2 = fs.push_jmp();
+    fs.fin_jmp(jmp1);
+
+    let e_len = fs.code_len();
+    fs.fin_jmp_sbx(jmp2, s_len - e_len);
+
+    Ok(())
   }
 
   fn cont_stmt(&mut self, stmt: &ContStmt) -> Result<(), CodegenError> {
@@ -785,11 +832,13 @@ impl AstVisitor<(), CodegenError> for Codegen {
           self.expr(&expr.argument).ok();
           tmp_regs.push(m_b);
 
-          let mut mov = Inst::new();
-          mov.set_op(OpCode::MOVE);
-          mov.set_a(res_reg);
-          mov.set_b(m_b);
-          fs.push_inst(mov);
+          if !is_tmp {
+            let mut mov = Inst::new();
+            mov.set_op(OpCode::MOVE);
+            mov.set_a(res_reg);
+            mov.set_b(m_b);
+            fs.push_inst(mov);
+          }
         }
 
         let assign: Expr = AssignExpr {
@@ -1920,15 +1969,14 @@ mod codegen_tests {
     LOADBOO{ A: 0, B: 1, C: 1 },
     LOADBOO{ A: 0, B: 0, C: 0 },
     TEST{ A: 0, B: 0, C: 0 },
-    JMP{ A: 0, sBx: 8 },
+    JMP{ A: 0, sBx: 7 },
     GETTABUP{ A: 1, B: 0, C: 257 },
-    MOVE{ A: 0, B: 1, C: 0 },
     GETTABUP{ A: 3, B: 0, C: 257 },
     ADD{ A: 4, B: 3, C: 260 },
     SETTABUP{ A: 0, B: 257, C: 4 },
     GETTABUP{ A: 0, B: 0, C: 261 },
     GETTABUP{ A: 0, B: 0, C: 262 },
-    JMP{ A: 0, sBx: -16 },";
+    JMP{ A: 0, sBx: -15 },";
     assert_code_eq(insts, &codegen.fs_ref().tpl.code);
   }
 
@@ -1949,13 +1997,12 @@ mod codegen_tests {
     SETTABUP{ A: 0, B: 257, C: 256 },
     LOADBOO{ A: 0, B: 1, C: 0 },
     TEST{ A: 0, B: 0, C: 0 },
-    JMP{ A: 0, sBx: 6 },
+    JMP{ A: 0, sBx: 5 },
     GETTABUP{ A: 1, B: 0, C: 257 },
-    MOVE{ A: 0, B: 1, C: 0 },
     GETTABUP{ A: 3, B: 0, C: 257 },
     ADD{ A: 4, B: 3, C: 258 },
     SETTABUP{ A: 0, B: 257, C: 4 },
-    JMP{ A: 0, sBx: -9 },
+    JMP{ A: 0, sBx: -8 },
     GETTABUP{ A: 0, B: 0, C: 259 },";
     assert_code_eq(insts, &codegen.fs_ref().tpl.code);
   }
@@ -1978,6 +2025,60 @@ mod codegen_tests {
     TEST{ A: 0, B: 0, C: 0 },
     JMP{ A: 0, sBx: 1 },
     JMP{ A: 0, sBx: -4 },
+    GETTABUP{ A: 0, B: 0, C: 256 },";
+    assert_code_eq(insts, &codegen.fs_ref().tpl.code);
+  }
+
+  #[test]
+  fn while_stmt_test() {
+    let ast = parse(
+      "
+    while(a > 1) { a } a
+    ",
+    );
+    let mut symtab = SymTab::new();
+    symtab.prog(&ast).unwrap();
+
+    let mut codegen = Codegen::new(symtab);
+    codegen.prog(&ast).ok();
+
+    let insts = "
+    GETTABUP{ A: 1, B: 0, C: 256 },
+    LT{ A: 1, B: 1, C: 257 },
+    LOADBOO{ A: 0, B: 0, C: 1 },
+    LOADBOO{ A: 0, B: 1, C: 0 },
+    TEST{ A: 0, B: 0, C: 0 },
+    JMP{ A: 0, sBx: 2 },
+    GETTABUP{ A: 0, B: 0, C: 256 },
+    JMP{ A: 0, sBx: -8 },
+    GETTABUP{ A: 0, B: 0, C: 256 },";
+    assert_code_eq(insts, &codegen.fs_ref().tpl.code);
+  }
+
+  #[test]
+  fn do_while_stmt_test() {
+    let ast = parse(
+      "
+    do { a-- } while(a > 0) a
+    ",
+    );
+    let mut symtab = SymTab::new();
+    symtab.prog(&ast).unwrap();
+
+    let mut codegen = Codegen::new(symtab);
+    codegen.prog(&ast).ok();
+
+    let insts = "
+    GETTABUP{ A: 1, B: 0, C: 256 },
+    GETTABUP{ A: 3, B: 0, C: 256 },
+    SUB{ A: 4, B: 3, C: 257 },
+    SETTABUP{ A: 0, B: 256, C: 4 },
+    GETTABUP{ A: 1, B: 0, C: 256 },
+    LT{ A: 1, B: 1, C: 258 },
+    LOADBOO{ A: 0, B: 0, C: 1 },
+    LOADBOO{ A: 0, B: 1, C: 0 },
+    TEST{ A: 0, B: 0, C: 0 },
+    JMP{ A: 0, sBx: -10 },
     GETTABUP{ A: 0, B: 0, C: 256 },";
     assert_code_eq(insts, &codegen.fs_ref().tpl.code);
   }
