@@ -852,7 +852,48 @@ impl AstVisitor<(), CodegenError> for Codegen {
   }
 
   fn call_expr(&mut self, expr: &CallExpr) -> Result<(), CodegenError> {
-    unimplemented!()
+    // As opposed to Lua, JS does not support multiple return values and does not have VARARG(until
+    // ES5, in ES6 Rest Parameters equals VARARG in Lua).
+    // However this does not mean the B consist in CALL cannot be 0 in ES5, since we should keep
+    // this ability to implement Function.prototype.apply
+
+    let fs = self.fs_ref();
+    let mut tmp_regs = vec![];
+    let (res_reg, is_tmp) = fs.pop_res_reg();
+    if is_tmp {
+      tmp_regs.push(res_reg)
+    }
+
+    let a = fs.take_reg();
+    fs.push_res_reg(a);
+    self.expr(&expr.callee).ok();
+    tmp_regs.push(a);
+
+    let b = expr.arguments.len() + 1;
+    let mut i = 1;
+    expr.arguments.iter().for_each(|arg| {
+      fs.push_res_reg(a + i);
+      self.expr(arg).ok();
+      i += 1;
+    });
+
+    let mut call = Inst::new();
+    call.set_op(OpCode::CALL);
+    call.set_a(a);
+    call.set_b(b as u32);
+
+    let ret_num = if is_tmp { 1 } else { 2 };
+    call.set_c(ret_num);
+    fs.push_inst(call);
+
+    if !is_tmp {
+      let mut mov = Inst::new();
+      mov.set_op(OpCode::MOVE);
+      mov.set_a(res_reg);
+      mov.set_b(a);
+    }
+    fs.free_regs(&tmp_regs);
+    Ok(())
   }
 
   fn unary_expr(&mut self, expr: &UnaryExpr) -> Result<(), CodegenError> {
@@ -2251,6 +2292,35 @@ mod codegen_tests {
     JMP{ A: 0, sBx: 1 },
     JMP{ A: 0, sBx: -21 },
     LOADK{ A: 0, Bx: 259 },";
+    assert_code_eq(insts, &codegen.fs_ref().tpl.code);
+  }
+
+  #[test]
+  fn call_expr_test() {
+    let ast = parse(
+      "
+    print(a,b)
+    print(add(a,b),1)
+    ",
+    );
+    let mut symtab = SymTab::new();
+    symtab.prog(&ast).unwrap();
+
+    let mut codegen = Codegen::new(symtab);
+    codegen.prog(&ast).ok();
+
+    let insts = "
+    GETTABUP{ A: 1, B: 0, C: 256 },
+    GETTABUP{ A: 2, B: 0, C: 257 },
+    GETTABUP{ A: 3, B: 0, C: 258 },
+    CALL{ A: 1, B: 3, C: 1 },
+    GETTABUP{ A: 1, B: 0, C: 256 },
+    GETTABUP{ A: 2, B: 0, C: 259 },
+    GETTABUP{ A: 3, B: 0, C: 257 },
+    GETTABUP{ A: 4, B: 0, C: 258 },
+    CALL{ A: 2, B: 3, C: 2 },
+    LOADK{ A: 3, Bx: 260 },
+    CALL{ A: 1, B: 3, C: 1 },";
     assert_code_eq(insts, &codegen.fs_ref().tpl.code);
   }
 }

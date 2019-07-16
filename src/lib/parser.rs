@@ -1005,7 +1005,7 @@ impl<'a> Parser<'a> {
         self.lexer.advance();
         break;
       }
-      match self.expr(false) {
+      match self.assign_expr(false, None) {
         Ok(expr) => args.push(expr),
         Err(e) => return Err(e),
       };
