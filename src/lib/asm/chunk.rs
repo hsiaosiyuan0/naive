@@ -288,6 +288,7 @@ pub enum OpCode {
   BITNOT,
   CLOSURE,
   CALL,
+  RETURN,
 }
 
 static mut OPCODE_NAME: Option<HashMap<OpCode, &'static str>> = None;
@@ -348,6 +349,7 @@ fn init_opcodes() {
     OpCode::BITNOT => "BITNOT", OpMode::ABC
     OpCode::CLOSURE => "CLOSURE", OpMode::ABC
     OpCode::CALL => "CALL", OpMode::ABC
+    OpCode::RETURN => "RETURN", OpMode::ABC
   };
   unsafe {
     OPCODE_NAME = op_name;

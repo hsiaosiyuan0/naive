@@ -718,7 +718,22 @@ impl AstVisitor<(), CodegenError> for Codegen {
   }
 
   fn ret_stmt(&mut self, stmt: &ReturnStmt) -> Result<(), CodegenError> {
-    unimplemented!()
+    let fs = self.fs_ref();
+
+    let mut ret = Inst::new();
+    ret.set_op(OpCode::RETURN);
+
+    if let Some(arg) = &stmt.argument {
+      let tr = fs.take_reg();
+      fs.push_res_reg(tr);
+      self.expr(arg).ok();
+      ret.set_a(tr);
+      ret.set_b(2);
+      fs.free_reg_to(tr);
+    }
+
+    fs.push_inst(ret);
+    Ok(())
   }
 
   fn with_stmt(&mut self, stmt: &WithStmt) -> Result<(), CodegenError> {
@@ -886,11 +901,12 @@ impl AstVisitor<(), CodegenError> for Codegen {
     call.set_c(ret_num);
     fs.push_inst(call);
 
-    if !is_tmp {
+    if !is_tmp && a != res_reg {
       let mut mov = Inst::new();
       mov.set_op(OpCode::MOVE);
       mov.set_a(res_reg);
       mov.set_b(a);
+      fs.push_inst(mov);
     }
     fs.free_regs(&tmp_regs);
     Ok(())
@@ -2321,6 +2337,31 @@ mod codegen_tests {
     CALL{ A: 2, B: 3, C: 2 },
     LOADK{ A: 3, Bx: 260 },
     CALL{ A: 1, B: 3, C: 1 },";
+    assert_code_eq(insts, &codegen.fs_ref().tpl.code);
+  }
+
+  #[test]
+  fn return_expr_test() {
+    let ast = parse(
+      "
+    return add(a,b)
+    return
+    ",
+    );
+    let mut symtab = SymTab::new();
+    symtab.prog(&ast).unwrap();
+
+    let mut codegen = Codegen::new(symtab);
+    codegen.prog(&ast).ok();
+
+    let insts = "
+    GETTABUP{ A: 1, B: 0, C: 256 },
+    GETTABUP{ A: 2, B: 0, C: 257 },
+    GETTABUP{ A: 3, B: 0, C: 258 },
+    CALL{ A: 1, B: 3, C: 2 },
+    MOVE{ A: 0, B: 1, C: 0 },
+    RETURN{ A: 0, B: 2, C: 0 },
+    RETURN{ A: 0, B: 0, C: 0 },";
     assert_code_eq(insts, &codegen.fs_ref().tpl.code);
   }
 }
