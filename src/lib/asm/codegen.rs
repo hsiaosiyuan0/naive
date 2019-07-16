@@ -2341,7 +2341,7 @@ mod codegen_tests {
   }
 
   #[test]
-  fn return_expr_test() {
+  fn return_stmt_test() {
     let ast = parse(
       "
     return add(a,b)
