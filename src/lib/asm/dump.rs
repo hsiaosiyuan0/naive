@@ -45,7 +45,7 @@ impl Dumper {
   pub fn process(&mut self) {
     self.w_header();
     self.w_byte(self.chk.upval_cnt);
-    let ptr = &self.chk.top_fun_tpl as *const FunTpl;
+    let ptr = &self.chk.fun_tpl as *const FnTpl;
     unsafe { self.w_fun_tpl(&(*ptr)) }
   }
 
@@ -67,7 +67,7 @@ impl Dumper {
     self.w_u32(u.idx);
   }
 
-  fn w_fun_tpl(&mut self, f: &FunTpl) {
+  fn w_fun_tpl(&mut self, f: &FnTpl) {
     self.w_byte(f.param_cnt);
     self.w_byte(f.is_vararg as u8);
     self.w_code(&f.code);
@@ -91,7 +91,7 @@ impl Dumper {
     uvs.iter().for_each(|uv| self.w_upval(uv));
   }
 
-  fn w_fun_tpls(&mut self, tpls: &Vec<FunTpl>) {
+  fn w_fun_tpls(&mut self, tpls: &Vec<FnTpl>) {
     self.w_u64(tpls.len() as u64);
     tpls.iter().for_each(|tpl| self.w_fun_tpl(tpl));
   }

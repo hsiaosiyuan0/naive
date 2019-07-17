@@ -216,19 +216,19 @@ impl fmt::Debug for Inst {
 }
 
 #[derive(Debug, Clone)]
-pub struct FunTpl {
+pub struct FnTpl {
   pub param_cnt: u8,
   pub is_vararg: bool,
   pub code: Vec<Inst>,
   pub consts: Vec<Const>,
   pub upvals: Vec<Upval>,
   pub locals: Vec<Local>,
-  pub fun_tpls: Vec<FunTpl>,
+  pub fun_tpls: Vec<FnTpl>,
 }
 
-impl FunTpl {
+impl FnTpl {
   pub fn new() -> Self {
-    FunTpl {
+    FnTpl {
       param_cnt: 0,
       is_vararg: false,
       code: vec![],
@@ -240,11 +240,12 @@ impl FunTpl {
   }
 }
 
+#[derive(Debug)]
 pub struct Chunk {
   pub sig: &'static str,
   pub ver: u64,
   pub upval_cnt: u8,
-  pub top_fun_tpl: FunTpl,
+  pub fun_tpl: FnTpl,
 }
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone, Hash)]

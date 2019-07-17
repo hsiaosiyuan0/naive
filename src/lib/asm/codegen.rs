@@ -1,6 +1,9 @@
 use crate::asm::chunk::*;
 use crate::asm::symtab::*;
 use crate::ast::*;
+use crate::lexer::*;
+use crate::parser::*;
+use crate::source::*;
 use crate::token::*;
 use crate::visitor::AstVisitor;
 use std::cmp::min;
@@ -29,7 +32,7 @@ pub struct LoopInfo {
 #[derive(Debug)]
 pub struct FnState {
   id: usize,
-  tpl: FunTpl,
+  tpl: FnTpl,
   parent: FnStatePtr,
   idx_in_parent: u32,
   local_reg_map: HashMap<String, u32>,
@@ -39,11 +42,20 @@ pub struct FnState {
   loop_stack: Vec<LoopInfo>,
 }
 
+fn fn_state_to_tpl(s: &FnState) -> FnTpl {
+  let mut tpl = s.tpl.clone();
+  s.subs.iter().for_each(|sp| {
+    let st = fn_state_to_tpl(as_fn_state(*sp));
+    tpl.fun_tpls.push(st);
+  });
+  tpl
+}
+
 impl FnState {
   pub fn new(id: usize) -> FnStatePtr {
     Box::into_raw(Box::new(FnState {
       id,
-      tpl: FunTpl::new(),
+      tpl: FnTpl::new(),
       parent: null_mut(),
       idx_in_parent: 0,
       local_reg_map: HashMap::new(),
@@ -341,7 +353,32 @@ impl Codegen {
     }
   }
 
-  pub fn enter_fn_state(&mut self) {
+  pub fn gen(code: &str) -> Chunk {
+    init_codegen_data();
+
+    let code = String::from(code);
+    let src = Source::new(&code);
+    let mut lexer = Lexer::new(src);
+    let mut parser = Parser::new(&mut lexer);
+    let ast = parser.prog().ok().unwrap();
+
+    let mut symtab = SymTab::new();
+    symtab.prog(&ast).unwrap();
+
+    let mut codegen = Codegen::new(symtab);
+    codegen.prog(&ast).ok();
+
+    let chk = Chunk {
+      sig: "naive",
+      ver: 0x0001,
+      upval_cnt: 0,
+      fun_tpl: fn_state_to_tpl(codegen.fs_ref()),
+    };
+
+    chk
+  }
+
+  fn enter_fn_state(&mut self) {
     let cfs = self.fs_ref();
     let fs = as_fn_state(FnState::new(self.scope_id_seed));
     self.scope_id_seed += 1;
@@ -351,7 +388,7 @@ impl Codegen {
     self.fs = fs;
   }
 
-  pub fn leave_fn_state(&mut self) {
+  fn leave_fn_state(&mut self) {
     self.fs = as_fn_state(self.fs).parent;
   }
 
@@ -1603,10 +1640,6 @@ pub fn init_codegen_data() {
 #[cfg(test)]
 mod codegen_tests {
   use super::*;
-  use crate::lexer::*;
-  use crate::parser::*;
-  use crate::source::*;
-  use crate::token::*;
 
   fn parse(code: &str) -> Prog {
     init_codegen_data();
