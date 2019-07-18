@@ -1,8 +1,8 @@
 use crate::asm::chunk::*;
 use crate::vm::gc::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::os::raw::c_void;
-use std::ptr::null_mut;
+use std::ptr::{drop_in_place, null_mut};
 
 pub struct RuntimeError {
   pub msg: String,
@@ -60,12 +60,12 @@ pub fn as_vm<T>(ptr: *mut T) -> &'static mut Vm {
 }
 
 pub struct Vm {
-  //  ci: CallInfoPtr,
   gc: Gc,
   c: Chunk,
   ci: CallInfoPtr,
+  // TODO:: release stack items
   s: Vec<GcObjPtr>,
-  env: JsDictPtr,
+  pub env: JsDictPtr,
 }
 
 impl JsFunction {
@@ -74,13 +74,47 @@ impl JsFunction {
   }
 }
 
-pub type NativeFn = fn(vm: *mut Vm);
+pub struct LocalScope {
+  vals: HashSet<JsObjPtr>,
+}
+
+impl LocalScope {
+  pub fn new() -> Self {
+    LocalScope {
+      vals: HashSet::new(),
+    }
+  }
+
+  pub fn reg<T>(&mut self, v: *mut T) -> JsObjPtr {
+    let v = v as JsObjPtr;
+    self.vals.insert(v);
+    v
+  }
+}
+
+impl Drop for LocalScope {
+  fn drop(&mut self) {
+    self.vals.iter().for_each(|v| as_obj(*v).dec())
+  }
+}
+
+impl Gc {
+  pub fn new_fun_native(&mut self, f: NativeFn, is_root: bool) -> JsFunPtr {
+    let nf = self.new_fun(is_root);
+    as_fun(nf).is_native = true;
+    as_fun(nf).f = f as *const c_void;
+    nf
+  }
+}
+
+pub type NativeFn = fn(vm: VmPtr);
 
 fn print_obj(vm: VmPtr) {
   let args = as_vm(vm).get_args();
   args.iter().for_each(|arg| match as_obj(*arg).kind {
     GcObjKind::Undef => println!("undefined"),
     GcObjKind::Number => println!("{:#?}", as_num(*arg).d),
+    GcObjKind::String => println!("{:#?}", as_str(*arg).d),
     _ => (),
   });
 }
@@ -98,8 +132,8 @@ impl Vm {
 
     let print_fn = v.gc.new_fun(false);
     as_fun(print_fn).is_native = true;
-    let fp = print_obj as *const c_void;
-    as_fun(print_fn).f = fp;
+    as_fun(print_fn).f = print_obj as *const c_void;;
+    as_obj(print_fn).inc();
     as_dict(v.env).insert("print", as_obj_ptr(print_fn));
 
     v.s.push(v.env as GcObjPtr);
@@ -186,7 +220,8 @@ impl Vm {
       return None;
     }
     let f = self.get_fn().ok().unwrap();
-    Some(&as_fun(f).tpl().consts[r - 256])
+    let cs = &as_fun(f).tpl().consts;
+    Some(&cs[r - 256])
   }
 
   fn rk(&self, r: u32) -> RKValue {
@@ -206,6 +241,10 @@ impl Vm {
     args
   }
 
+  fn set_return(&mut self, ret: JsObjPtr) {
+    self.set_stack_slot(as_ci(self.ci).fun, ret);
+  }
+
   fn get_stack_item(&self, i: u32) -> JsObjPtr {
     *self.s.get(i as usize).unwrap()
   }
@@ -219,12 +258,13 @@ impl Vm {
     let op = OpCode::from_u32(i.op());
     match op {
       OpCode::GETTABUP => {
+        let mut ls = LocalScope::new();
         let ra = i.a();
         let rc = i.c();
         let k = match self.rk(i.c()) {
           RKValue::Kst(kst) => {
-            // TODO:: as local
-            self.gc.new_obj_from_kst(kst, false)
+            let t = self.gc.new_obj_from_kst(kst, false);
+            ls.reg(t)
           }
           RKValue::JsObj(k) => k,
         };
@@ -233,28 +273,42 @@ impl Vm {
         self.set_stack_slot(as_ci(self.ci).base + ra, v);
       }
       OpCode::SETTABUP => {
+        let mut ls = LocalScope::new();
         let ra = i.a();
         let rb = i.b();
         let k = match self.rk(i.b()) {
           RKValue::Kst(kst) => {
-            // TODO:: as local
-            self.gc.new_obj_from_kst(kst, false)
+            let t = self.gc.new_obj_from_kst(kst, false);
+            ls.reg(t)
           }
           RKValue::JsObj(k) => k,
         };
         let v = match self.rk(i.c()) {
           RKValue::Kst(kst) => {
-            // TODO:: as local
-            self.gc.new_obj_from_kst(kst, false)
+            let t = self.gc.new_obj_from_kst(kst, false);
+            ls.reg(t)
           }
           RKValue::JsObj(v) => v,
         };
         let uv = as_uv(self.get_upval(i.a()));
         as_dict(uv.v).set(k, v);
       }
+      OpCode::LOADK => {
+        let mut ls = LocalScope::new();
+        let ra = i.a();
+        let v = match self.rk(i.bx()) {
+          RKValue::Kst(kst) => {
+            let t = self.gc.new_obj_from_kst(kst, false);
+            ls.reg(t)
+          }
+          _ => panic!(),
+        };
+        self.set_stack_slot(as_ci(self.ci).base + ra, v);
+      }
       OpCode::CALL => {
         let fi = as_ci(self.ci).base + i.a();
         let fp = self.get_stack_item(fi);
+        assert_eq!(as_obj(fp).kind, GcObjKind::Function);
         let f = as_fun(fp);
         if f.is_native {
           let ci = CallInfo::new();
@@ -269,11 +323,26 @@ impl Vm {
             f(self)
           }
         }
+        let cci = self.ci;
+        unsafe {
+          drop_in_place(cci);
+        }
+        let pci = as_ci(cci).prev;
+        as_ci(pci).next = null_mut();
+        self.ci = pci;
       }
       // TODO::
       _ => (),
     }
     Ok(())
+  }
+}
+
+impl Vm {
+  pub fn register_native_fn(&mut self, name: &str, nf: NativeFn) {
+    let f = self.gc.new_fun_native(nf, false);
+    as_obj(f).inc();
+    as_dict(self.env).insert(name, as_obj_ptr(f));
   }
 }
 
@@ -288,10 +357,31 @@ mod exec_tests {
 
     let chk = Codegen::gen(
       "var a = 1
-    print(a)",
+    print(a)
+    assert(1, a)
+    print(native_fn())
+    ",
     );
     println!("{:#?}", &chk);
     let mut vm = Vm::new(chk, 1024);
+
+    vm.register_native_fn("assert", |vm: VmPtr| {
+      let args = as_vm(vm).get_args();
+      assert_eq!(args.len(), 2);
+      let a = args[0];
+      let b = args[1];
+      assert_eq!(as_num(a).d, as_num(b).d);
+      println!("assert ok");
+    });
+
+    vm.register_native_fn("native_fn", |vm: VmPtr| {
+      let mut ls = LocalScope::new();
+      let ret = as_vm(vm).gc.new_str(false);
+      ls.reg(ret);
+      as_str(ret).d.push_str("return from native call");
+      as_vm(vm).set_return(as_obj_ptr(ret));
+    });
+
     vm.exec();
   }
 }

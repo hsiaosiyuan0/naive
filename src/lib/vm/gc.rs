@@ -65,7 +65,7 @@ pub fn as_gc<T>(ptr: *mut T) -> &'static mut Gc {
 }
 
 #[repr(C)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub enum GcObjKind {
   String,
   Number,
@@ -270,6 +270,7 @@ fn upval_deinit(ptr: JsObjPtr) {
 
 impl UpVal {
   fn new(gc: &mut Gc, v: JsObjPtr, is_root: bool) -> UpValPtr {
+    as_obj(v).inc();
     let ptr = Box::into_raw(Box::new(UpVal {
       base: GcObj {
         ref_cnt: 1,
@@ -400,7 +401,6 @@ impl Gc {
     let need = mem::size_of::<UpVal>();
     self.xgc(need);
     self.heap_size += need;
-    self.inc(v);
     UpVal::new(self, v, is_root)
   }
 
@@ -510,7 +510,9 @@ impl Gc {
 impl Drop for Gc {
   fn drop(&mut self) {
     for p in self.obj_list.clone() {
-      self.drop(p);
+      if self.obj_list.contains(&p) {
+        self.dec(p);
+      }
     }
   }
 }
