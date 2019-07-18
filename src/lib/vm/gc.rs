@@ -1,8 +1,8 @@
-use std::alloc::{handle_alloc_error, Alloc, Global, Layout};
+use crate::asm::chunk::*;
 use std::collections::{HashMap, HashSet};
 use std::mem;
 use std::os::raw::c_void;
-use std::ptr::{drop_in_place, null, null_mut, NonNull};
+use std::ptr::{drop_in_place, null, null_mut};
 use std::sync::Once;
 
 pub type GcObjPtr = *mut GcObj;
@@ -108,7 +108,7 @@ impl GcObj {
 #[derive(Debug, Clone)]
 pub struct JsString {
   base: GcObj,
-  d: String,
+  pub d: String,
 }
 
 fn js_str_deinit(ptr: JsObjPtr) {
@@ -140,7 +140,7 @@ impl JsString {
 #[derive(Debug, Clone)]
 pub struct JsNumber {
   base: GcObj,
-  d: f64,
+  pub d: f64,
 }
 
 fn js_num_deinit(ptr: JsObjPtr) {
@@ -349,11 +349,30 @@ impl Gc {
     JsString::new(self, is_root)
   }
 
+  pub fn new_str_from_kst(&mut self, kst: &Const, is_root: bool) -> JsStrPtr {
+    let s = self.new_str(is_root);
+    as_str(s).d = kst.str().to_owned();
+    s
+  }
+
+  pub fn new_obj_from_kst(&mut self, kst: &Const, is_root: bool) -> JsObjPtr {
+    match kst {
+      Const::String(_) => as_obj_ptr(self.new_str_from_kst(kst, is_root)),
+      Const::Number(_) => as_obj_ptr(self.new_num_from_kst(kst, is_root)),
+    }
+  }
+
   pub fn new_num(&mut self, is_root: bool) -> JsNumPtr {
     let need = mem::size_of::<JsNumber>();
     self.xgc(need);
     self.heap_size += need;
     JsNumber::new(self, is_root)
+  }
+
+  pub fn new_num_from_kst(&mut self, kst: &Const, is_root: bool) -> JsNumPtr {
+    let n = self.new_num(is_root);
+    as_num(n).d = kst.num();
+    n
   }
 
   pub fn new_arr(&mut self, is_root: bool) -> JsArrPtr {

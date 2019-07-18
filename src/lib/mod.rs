@@ -1,5 +1,3 @@
-#![feature(allocator_api)]
-
 pub mod asm;
 pub mod ast;
 pub mod lexer;

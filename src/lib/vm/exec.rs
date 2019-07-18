@@ -47,6 +47,11 @@ impl CallInfo {
   }
 }
 
+pub enum RKValue {
+  Kst(&'static Const),
+  JsObj(JsObjPtr),
+}
+
 pub type VmPtr = *mut Vm;
 
 #[inline(always)]
@@ -75,6 +80,7 @@ fn print_obj(vm: VmPtr) {
   let args = as_vm(vm).get_args();
   args.iter().for_each(|arg| match as_obj(*arg).kind {
     GcObjKind::Undef => println!("undefined"),
+    GcObjKind::Number => println!("{:#?}", as_num(*arg).d),
     _ => (),
   });
 }
@@ -172,7 +178,7 @@ impl Vm {
     Ok(())
   }
 
-  fn rk(&self, r: u32) -> Option<&'static Const> {
+  fn get_kst(&self, r: u32) -> Option<&'static Const> {
     let r = r as usize;
     let mask = !(1 << 8);
     let is_k = r & mask == 256;
@@ -181,6 +187,13 @@ impl Vm {
     }
     let f = self.get_fn().ok().unwrap();
     Some(&as_fun(f).tpl().consts[r - 256])
+  }
+
+  fn rk(&self, r: u32) -> RKValue {
+    if let Some(k) = self.get_kst(r) {
+      return RKValue::Kst(k);
+    }
+    RKValue::JsObj(self.get_stack_item(r))
   }
 
   fn get_args(&self) -> Vec<JsObjPtr> {
@@ -197,17 +210,47 @@ impl Vm {
     *self.s.get(i as usize).unwrap()
   }
 
+  fn get_upval(&self, i: u32) -> UpValPtr {
+    let f = as_fun(self.get_fn().ok().unwrap());
+    *f.upvals.get(i as usize).unwrap()
+  }
+
   fn dispatch(&mut self, i: Inst) -> Result<(), RuntimeError> {
     let op = OpCode::from_u32(i.op());
     match op {
       OpCode::GETTABUP => {
         let ra = i.a();
         let rc = i.c();
-        let k = self.rk(rc).unwrap();
-        let f = as_fun(self.get_fn().ok().unwrap());
-        let d = *f.upvals.get(i.b() as usize).unwrap();
-        let v = as_dict(as_uv(d).v).get(k.str());
+        let k = match self.rk(i.c()) {
+          RKValue::Kst(kst) => {
+            // TODO:: as local
+            self.gc.new_obj_from_kst(kst, false)
+          }
+          RKValue::JsObj(k) => k,
+        };
+        let uv = as_uv(self.get_upval(i.b()));
+        let v = as_dict(uv.v).get(k);
         self.set_stack_slot(as_ci(self.ci).base + ra, v);
+      }
+      OpCode::SETTABUP => {
+        let ra = i.a();
+        let rb = i.b();
+        let k = match self.rk(i.b()) {
+          RKValue::Kst(kst) => {
+            // TODO:: as local
+            self.gc.new_obj_from_kst(kst, false)
+          }
+          RKValue::JsObj(k) => k,
+        };
+        let v = match self.rk(i.c()) {
+          RKValue::Kst(kst) => {
+            // TODO:: as local
+            self.gc.new_obj_from_kst(kst, false)
+          }
+          RKValue::JsObj(v) => v,
+        };
+        let uv = as_uv(self.get_upval(i.a()));
+        as_dict(uv.v).set(k, v);
       }
       OpCode::CALL => {
         let fi = as_ci(self.ci).base + i.a();
@@ -243,7 +286,10 @@ mod exec_tests {
   fn exec_init_test() {
     init_gc_data();
 
-    let chk = Codegen::gen("print(a)");
+    let chk = Codegen::gen(
+      "var a = 1
+    print(a)",
+    );
     println!("{:#?}", &chk);
     let mut vm = Vm::new(chk, 1024);
     vm.exec();
