@@ -155,6 +155,24 @@ impl Vm {
     v
   }
 
+  fn set_stack_slot(&mut self, i: u32, v: JsObjPtr) {
+    self.gc.inc(v);
+    let i = i as usize;
+    if i > self.s.len() - 1 {
+      self.s.resize(i, null_mut());
+    }
+    match self.s.get(i) {
+      Some(old) => {
+        if !(*old).is_null() {
+          self.gc.dec(*old);
+        }
+      }
+      _ => (),
+    }
+    self.gc.append_root(v);
+    self.s.insert(i, v);
+  }
+
   fn get_fn(&self) -> Result<JsFunPtr, RuntimeError> {
     let f = self.s.get(as_ci(self.ci).fun as usize);
     if f.is_none() {
@@ -177,25 +195,14 @@ impl Vm {
     Ok(f.tpl().code.get(pc as usize))
   }
 
-  fn set_stack_slot(&mut self, i: u32, v: JsObjPtr) {
-    self.gc.inc(v);
-    let i = i as usize;
-    if i > self.s.len() - 1 {
-      self.s.resize(i, null_mut());
-    }
-    match self.s.get(i) {
-      Some(old) => {
-        if !(*old).is_null() {
-          self.gc.dec(*old);
-        }
-      }
-      _ => (),
-    }
-    self.gc.append_root(v);
-    self.s.insert(i, v);
-  }
-
   fn exec(&mut self) -> Result<(), RuntimeError> {
+    unsafe {
+      let fun = self.get_fn().ok().unwrap();
+      if !as_fun(fun).is_native {
+        let f = &(*(as_fun(fun).f as *const FnTpl));
+        println!("{:#?}", f);
+      }
+    }
     loop {
       let i = match self.fetch() {
         Err(e) => return Err(e),
@@ -214,9 +221,9 @@ impl Vm {
 
   fn get_kst(&self, r: u32) -> Option<&'static Const> {
     let r = r as usize;
-    let mask = !(1 << 8);
+    let mask = 1 << 8;
     let is_k = r & mask == 256;
-    if is_k {
+    if !is_k {
       return None;
     }
     let f = self.get_fn().ok().unwrap();
@@ -224,11 +231,11 @@ impl Vm {
     Some(&cs[r - 256])
   }
 
-  fn rk(&self, r: u32) -> RKValue {
+  fn rk(&self, base: u32, r: u32) -> RKValue {
     if let Some(k) = self.get_kst(r) {
       return RKValue::Kst(k);
     }
-    RKValue::JsObj(self.get_stack_item(r))
+    RKValue::JsObj(self.get_stack_item(base + r))
   }
 
   fn get_args(&self) -> Vec<JsObjPtr> {
@@ -254,6 +261,12 @@ impl Vm {
     *f.upvals.get(i as usize).unwrap()
   }
 
+  fn get_fn_tpl(&self, i: u32) -> *const FnTpl {
+    let cf = self.get_fn().ok().unwrap();
+    let tpl = &as_fun(cf).tpl().fun_tpls[i as usize];
+    tpl as *const FnTpl
+  }
+
   fn dispatch(&mut self, i: Inst) -> Result<(), RuntimeError> {
     let op = OpCode::from_u32(i.op());
     match op {
@@ -261,7 +274,8 @@ impl Vm {
         let mut ls = LocalScope::new();
         let ra = i.a();
         let rc = i.c();
-        let k = match self.rk(i.c()) {
+        let base = as_ci(self.ci).base;
+        let k = match self.rk(base, i.c()) {
           RKValue::Kst(kst) => {
             let t = self.gc.new_obj_from_kst(kst, false);
             ls.reg(t)
@@ -276,14 +290,15 @@ impl Vm {
         let mut ls = LocalScope::new();
         let ra = i.a();
         let rb = i.b();
-        let k = match self.rk(i.b()) {
+        let base = as_ci(self.ci).base;
+        let k = match self.rk(base, i.b()) {
           RKValue::Kst(kst) => {
             let t = self.gc.new_obj_from_kst(kst, false);
             ls.reg(t)
           }
           RKValue::JsObj(k) => k,
         };
-        let v = match self.rk(i.c()) {
+        let v = match self.rk(base, i.c()) {
           RKValue::Kst(kst) => {
             let t = self.gc.new_obj_from_kst(kst, false);
             ls.reg(t)
@@ -296,7 +311,7 @@ impl Vm {
       OpCode::LOADK => {
         let mut ls = LocalScope::new();
         let ra = i.a();
-        let v = match self.rk(i.bx()) {
+        let v = match self.rk(0, i.bx()) {
           RKValue::Kst(kst) => {
             let t = self.gc.new_obj_from_kst(kst, false);
             ls.reg(t)
@@ -305,24 +320,45 @@ impl Vm {
         };
         self.set_stack_slot(as_ci(self.ci).base + ra, v);
       }
+      OpCode::CLOSURE => {
+        let mut ls = LocalScope::new();
+        let f = self.gc.new_fun(false);
+        as_fun(f).f = self.get_fn_tpl(i.bx()) as *const c_void;
+        ls.reg(f);
+        self.set_stack_slot(as_ci(self.ci).base + i.a(), as_obj_ptr(f));
+      }
+      OpCode::RETURN => {
+        let b = i.b();
+        let ret_num = b - 1;
+        assert!(ret_num <= 1);
+        if ret_num == 1 {
+          let ret = self.get_stack_item(as_ci(self.ci).base + i.a());
+          self.set_stack_slot(as_ci(self.ci).fun, ret);
+        }
+      }
       OpCode::CALL => {
         let fi = as_ci(self.ci).base + i.a();
         let fp = self.get_stack_item(fi);
         assert_eq!(as_obj(fp).kind, GcObjKind::Function);
         let f = as_fun(fp);
+
+        let ci = CallInfo::new();
+        let cci = self.ci;
+        as_ci(cci).next = ci;
+        as_ci(ci).prev = self.ci;
+        as_ci(ci).fun = as_ci(cci).base + i.a();
+        as_ci(ci).base = i.b() + as_ci(ci).fun;
+        self.ci = ci;
+
         if f.is_native {
-          let ci = CallInfo::new();
-          let cci = self.ci;
-          as_ci(cci).next = ci;
-          as_ci(ci).prev = self.ci;
-          as_ci(ci).fun = as_ci(cci).base + i.a();
-          as_ci(ci).base = i.b() + as_ci(ci).fun;
-          self.ci = ci;
           unsafe {
             let f = std::mem::transmute::<*const c_void, NativeFn>(f.f);
             f(self)
           }
+        } else {
+          self.exec();
         }
+
         let cci = self.ci;
         unsafe {
           drop_in_place(cci);
@@ -382,6 +418,25 @@ mod exec_tests {
       as_vm(vm).set_return(as_obj_ptr(ret));
     });
 
+    vm.exec();
+  }
+
+  #[test]
+  fn js_fn_test() {
+    init_gc_data();
+
+    let chk = Codegen::gen(
+      "
+    function f() {
+      return 'return from f()'
+    }
+   
+    print(f())
+    ",
+    );
+
+    println!("{:#?}", &chk);
+    let mut vm = Vm::new(chk, 1024);
     vm.exec();
   }
 }
