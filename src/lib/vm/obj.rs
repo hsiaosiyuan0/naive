@@ -4,13 +4,11 @@ use std::ptr::eq;
 
 impl GcObj {
   pub fn eqs_true(&mut self) -> bool {
-    let gc = as_gc(self.gc());
-    as_obj_ptr(self) == gc.js_true()
+    self.kind == GcObjKind::Boolean && as_bool(self).d
   }
 
   pub fn eqs_false(&mut self) -> bool {
-    let gc = as_gc(self.gc());
-    as_obj_ptr(self) == gc.js_false()
+    self.kind == GcObjKind::Boolean && !as_bool(self).d
   }
 
   pub fn t_pri(&mut self) -> JsObjPtr {
@@ -30,7 +28,7 @@ impl GcObj {
       GcObjKind::Null => gc.new_num(false),
       GcObjKind::Boolean => {
         let n = gc.new_num(false);
-        let is_true = as_obj_ptr(self) == gc.js_true();
+        let is_true = as_obj(self).eqs_true();
         as_num(n).d = if is_true { 1.0 } else { 0.0 };
         n
       }
@@ -47,12 +45,12 @@ impl GcObj {
     }
   }
 
-  pub fn t_bool(&mut self) -> JsObjPtr {
+  pub fn t_bool(&mut self) -> JsBoolPtr {
     let gc = as_gc(self.gc());
     match self.kind {
       GcObjKind::Undef => gc.js_false(),
       GcObjKind::Null => gc.js_false(),
-      GcObjKind::Boolean => as_obj_ptr(self),
+      GcObjKind::Boolean => as_obj_ptr(self) as JsBoolPtr,
       GcObjKind::Number => {
         let n = as_num(self);
         if n.d == 0.0 || n.d.is_nan() {
@@ -216,9 +214,6 @@ impl GcObj {
   }
 
   pub fn le(a: JsObjPtr, b: JsObjPtr) -> bool {
-    if GcObj::lt(a, b) {
-      return true;
-    }
-    GcObj::eq(a, b)
+    GcObj::lt(a, b) || GcObj::eq(a, b)
   }
 }

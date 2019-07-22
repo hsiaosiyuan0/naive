@@ -12,6 +12,7 @@ pub type JsObjPtr = GcObjPtr;
 
 pub type JsStrPtr = *mut JsString;
 pub type JsNumPtr = *mut JsNumber;
+pub type JsBoolPtr = *mut JsBoolean;
 pub type JsArrPtr = *mut JsArray;
 pub type JsDictPtr = *mut JsDict;
 pub type JsFunPtr = *mut JsFunction;
@@ -38,6 +39,11 @@ pub fn as_str<T>(ptr: *mut T) -> &'static mut JsString {
 #[inline(always)]
 pub fn as_num<T>(ptr: *mut T) -> &'static mut JsNumber {
   unsafe { &mut (*(ptr as JsNumPtr)) }
+}
+
+#[inline(always)]
+pub fn as_bool<T>(ptr: *mut T) -> &'static mut JsBoolean {
+  unsafe { &mut (*(ptr as JsBoolPtr)) }
 }
 
 #[inline(always)]
@@ -171,6 +177,13 @@ impl JsNumber {
     gc.register(as_obj_ptr(ptr), is_root);
     ptr
   }
+}
+
+#[repr(C)]
+#[derive(Debug, Clone)]
+pub struct JsBoolean {
+  base: GcObj,
+  pub d: bool,
 }
 
 #[repr(C)]
@@ -339,8 +352,8 @@ pub struct Gc {
   marked: Vec<GcObjPtr>,
   js_null_: JsObjPtr,
   js_undef_: JsObjPtr,
-  js_true_: JsObjPtr,
-  js_false_: JsObjPtr,
+  js_true_: JsBoolPtr,
+  js_false_: JsBoolPtr,
 }
 
 static INIT_GC_DATA_ONCE: Once = Once::new();
@@ -377,18 +390,24 @@ impl Gc {
       deinit: default_deinit,
     }));
 
-    self.js_true_ = Box::into_raw(Box::new(GcObj {
-      ref_cnt: 1,
-      kind: GcObjKind::Boolean,
-      gc: self as GcPtr,
-      deinit: default_deinit,
+    self.js_true_ = Box::into_raw(Box::new(JsBoolean {
+      base: GcObj {
+        ref_cnt: 1,
+        kind: GcObjKind::Boolean,
+        gc: self as GcPtr,
+        deinit: default_deinit,
+      },
+      d: true,
     }));
 
-    self.js_false_ = Box::into_raw(Box::new(GcObj {
-      ref_cnt: 1,
-      kind: GcObjKind::Boolean,
-      gc: self as GcPtr,
-      deinit: default_deinit,
+    self.js_false_ = Box::into_raw(Box::new(JsBoolean {
+      base: GcObj {
+        ref_cnt: 1,
+        kind: GcObjKind::Boolean,
+        gc: self as GcPtr,
+        deinit: default_deinit,
+      },
+      d: false,
     }));
   }
 
@@ -400,11 +419,11 @@ impl Gc {
     self.js_undef_
   }
 
-  pub fn js_true(&self) -> JsObjPtr {
+  pub fn js_true(&self) -> JsBoolPtr {
     self.js_true_
   }
 
-  pub fn js_false(&self) -> JsObjPtr {
+  pub fn js_false(&self) -> JsBoolPtr {
     self.js_false_
   }
 
@@ -518,9 +537,7 @@ impl Gc {
   pub fn xgc(&mut self, need: usize) {
     let s = self.heap_size + need;
     if s >= self.max_heap_size {
-      println!("{:#?}", self.heap_size);
       self.gc();
-      println!("{:#?}", self.heap_size);
       assert!(self.heap_size + need <= self.max_heap_size);
     }
   }

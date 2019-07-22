@@ -1,7 +1,7 @@
 use crate::ast::*;
 use crate::visitor::AstVisitor;
 use linked_hash_set::LinkedHashSet;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ptr::{drop_in_place, null_mut};
 
 pub type ScopePtr = *mut Scope;
@@ -15,6 +15,7 @@ pub struct Scope {
   pub id: usize,
   parent: ScopePtr,
   subs: Vec<ScopePtr>,
+  pub params: HashSet<String>,
   pub bindings: LinkedHashSet<String>,
 }
 
@@ -24,6 +25,7 @@ impl Scope {
       id,
       parent: null_mut(),
       subs: vec![],
+      params: HashSet::new(),
       bindings: LinkedHashSet::new(),
     }))
   }
@@ -34,6 +36,14 @@ impl Scope {
 
   pub fn has_binding(&self, n: &str) -> bool {
     self.bindings.contains(n)
+  }
+
+  pub fn add_param(&mut self, n: &str) {
+    self.params.insert(n.to_owned());
+  }
+
+  pub fn has_param(&self, n: &str) -> bool {
+    self.params.contains(n)
   }
 }
 
@@ -66,7 +76,11 @@ impl SymTab {
   }
 
   fn add_binding(&mut self, n: &str) {
-    as_scope(self.s).add_binding(n)
+    as_scope(self.s).add_binding(n);
+  }
+
+  fn add_param(&mut self, n: &str) {
+    as_scope(self.s).add_param(n);
   }
 
   pub fn get_scope(&self, i: usize) -> ScopePtr {
@@ -199,13 +213,15 @@ impl AstVisitor<(), ()> for SymTab {
 
   fn fn_stmt(&mut self, stmt: &FnDec) -> Result<(), ()> {
     if let Some(id) = &stmt.id {
-      self.add_binding(id.id().name.as_str());
+      let f_name = id.id().name.as_str();
+      self.add_binding(f_name);
     }
     self.enter_scope();
-    stmt
-      .params
-      .iter()
-      .for_each(|p| self.add_binding(p.id().name.as_str()));
+    stmt.params.iter().for_each(|p| {
+      let n = p.id().name.as_str();
+      self.add_param(n);
+      self.add_binding(n);
+    });
     self.stmt(&stmt.body).ok();
     self.leave_scope();
     Ok(())
@@ -295,10 +311,11 @@ impl AstVisitor<(), ()> for SymTab {
     // consider this code: `var a = function b() {}; b();` will produce
     // ReferenceError `b is not defined`
     self.enter_scope();
-    expr
-      .params
-      .iter()
-      .for_each(|p| self.add_binding(p.id().name.as_str()));
+    expr.params.iter().for_each(|p| {
+      let n = p.id().name.as_str();
+      self.add_param(n);
+      self.add_binding(n);
+    });
     self.stmt(&expr.body).ok();
     self.leave_scope();
     Ok(())

@@ -62,6 +62,7 @@ impl JsNumber {
 
   pub fn set_v_bool(&mut self, b: JsObjPtr) {
     let gc = as_gc(as_obj(self).gc());
+    let b = b as JsBoolPtr;
     self.d = if b == gc.js_true() { 1.0 } else { 0.0 }
   }
 }

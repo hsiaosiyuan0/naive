@@ -398,8 +398,8 @@ impl Codegen {
 
     let bindings = self.bindings();
     if bindings.len() > 0 {
-      let a = fs.take_reg();
-      let mut b = a;
+      let a = fs.take_reg() + self.symtab_scope().params.len() as u32;
+      let mut b = 0;
       bindings.iter().for_each(|name| {
         fs.def_local(name.as_str(), b);
         b = fs.take_reg();
@@ -643,18 +643,18 @@ impl AstVisitor<(), CodegenError> for Codegen {
     let mut t = Inst::new();
     t.set_op(OpCode::TEST);
     t.set_a(tr);
-    t.set_c(0);
+    t.set_c(1);
     fs.push_inst(t);
     fs.free_reg_to(tr);
 
     // jmp out of loop
     let jmp1 = fs.push_jmp();
 
+    self.stmt(&stmt.body).ok();
+
     if let Some(update) = &stmt.update {
       self.expr(update).ok();
     }
-
-    self.stmt(&stmt.body).ok();
 
     // jmp to the loop start
     let jmp2 = fs.push_jmp();
@@ -1052,37 +1052,24 @@ impl AstVisitor<(), CodegenError> for Codegen {
       | Symbol::GE
       | Symbol::NotEq
       | Symbol::NotEqStrict => {
-        // People who are familiar with the CLua implementation may notice that here we don't use
-        // JMP, the reason of why CLua uses JMP with EQ|LT|LE is that it treats the comparisons
-        // which their results are required as using them in the test part of the `if-else` statement,
-        // eg: it treats all `var a = b > c` as
-        // `var a = if b > c then return true else return false`
-        // We use JMP with EQ|LT|LE in `if-else` statement to eliminate a duplicated TEST, otherwise
-        // we should firstly use a temp register to save the comparison result and then use TEST to
-        // test that result to perform the conditional jump
-        // However this way(treat all comparisons as using them in `if-else`) cause a redundant JMP is
-        // produced when we just use them like `var a = b > c`, in this case the instructions can be
-        // generated like below, there is no JUMP and just three instructions are used.
-        // For the situation whenever JUMP is required will be properly handled in the outer `if-else`
-        // routine
-        fs.tpl.code.last_mut().unwrap().set_a(1);
-
-        let load_true_first = match op_s {
-          Symbol::LT | Symbol::LE | Symbol::Eq | Symbol::EqStrict => true,
-          _ => false,
-        };
+        match op_s {
+          Symbol::LT | Symbol::LE | Symbol::Eq | Symbol::EqStrict => {
+            fs.tpl.code.last_mut().unwrap().set_a(1)
+          }
+          _ => fs.tpl.code.last_mut().unwrap().set_a(0),
+        }
 
         let mut lb1 = Inst::new();
         lb1.set_op(OpCode::LOADBOO);
         lb1.set_a(res_reg);
-        lb1.set_b(if load_true_first { 1 } else { 0 });
-        lb1.set_c(if load_true_first { 1 } else { 0 });
+        lb1.set_b(1);
+        lb1.set_c(1);
         fs.push_inst(lb1);
 
         let mut lb2 = Inst::new();
         lb2.set_op(OpCode::LOADBOO);
         lb2.set_a(res_reg);
-        lb2.set_b(if load_true_first { 0 } else { 1 });
+        lb2.set_b(0);
         fs.push_inst(lb2);
       }
       Symbol::And | Symbol::Or => {
@@ -1520,9 +1507,9 @@ fn init_symbol_opcode_map() {
   map.insert(Symbol::Mod, OpCode::MOD);
   map.insert(Symbol::Div, OpCode::DIV);
   map.insert(Symbol::LT, OpCode::LT);
-  map.insert(Symbol::GT, OpCode::LT);
+  map.insert(Symbol::GT, OpCode::LE);
   map.insert(Symbol::LE, OpCode::LE);
-  map.insert(Symbol::GE, OpCode::LE);
+  map.insert(Symbol::GE, OpCode::LT);
   map.insert(Symbol::Eq, OpCode::EQ);
   map.insert(Symbol::NotEq, OpCode::EQ);
   map.insert(Symbol::EqStrict, OpCode::EQS);

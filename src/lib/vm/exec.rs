@@ -389,14 +389,10 @@ impl Vm {
       }
       OpCode::TEST => {
         let base = as_ci(self.ci).base;
-        let v = self.get_stack_item(base + i.b());
+        let v = self.get_stack_item(base + i.a());
         let b = as_obj(v).t_bool();
-        let c = i.c();
-        let eq = if c == 1 {
-          as_obj(b).eqs_true()
-        } else {
-          as_obj(b).eqs_false()
-        };
+        let com = if as_obj(b).eqs_true() { 1 } else { 0 };
+        let eq = com == i.c();
         if eq {
           as_ci(self.ci).pc += 1;
         }
@@ -404,14 +400,9 @@ impl Vm {
       OpCode::TESTSET => {
         let base = as_ci(self.ci).base;
         let b = self.get_stack_item(base + i.b());
-        let eq = if i.c() == 1 {
-          // the boolean values `true` and `false` are singleton
-          // them don't need to be released after been used
-          let t = as_obj(b).t_bool();
-          as_obj(t).eqs_true()
-        } else {
-          as_obj(b).eqs_false()
-        };
+        let tb = as_obj(b).t_bool();
+        let com = if as_obj(tb).eqs_true() { 1 } else { 0 };
+        let eq = com == i.c();
         if eq {
           as_ci(self.ci).pc += 1;
         } else {
@@ -429,7 +420,7 @@ impl Vm {
         } else {
           self.gc.js_false()
         };
-        self.set_stack_slot(base + i.a(), b);
+        self.set_stack_slot(base + i.a(), as_obj_ptr(b));
         if i.c() == 1 {
           as_ci(self.ci).pc += 1;
         }
@@ -519,6 +510,14 @@ impl Vm {
           }
           self.post_call(i.c() - 1);
         } else {
+          // pass args
+          let n_args = i.b() - 1;
+          let r_arg = as_ci(self.ci).fun + 1;
+          let t_arg = as_ci(self.ci).base;
+          for i in 0..n_args {
+            let v = self.get_stack_item(r_arg + i);
+            self.set_stack_slot(t_arg + i, v);
+          }
           self.exec();
         }
       }
@@ -723,10 +722,59 @@ mod exec_tests {
     if (a >= 1) b = 0 else b = 1;
     assert_num_eq(0, b)
 
+    b = 3
+    if (b > 1) b = 0 else b = 1;
+    assert_num_eq(0, b)
+
     a = 1
     b = '1'
     if (a == b) { b = 1 } else b = 0
     assert_num_eq(1, b)
+    ",
+    );
+
+    let mut vm = new_vm(chk);
+    vm.exec();
+  }
+
+  #[test]
+  fn for_test() {
+    let chk = Codegen::gen(
+      "
+    var a = 10
+    function f(a) {
+      var ret = 0
+      for(var i = 1; i <= a; i++) {
+        ret += i
+      }
+      return ret
+    }
+    var b = f(a)
+    assert_num_eq(10, a)
+    assert_num_eq(55, b)
+    ",
+    );
+
+    let mut vm = new_vm(chk);
+    vm.exec();
+  }
+
+  #[test]
+  fn for_break_test() {
+    let chk = Codegen::gen(
+      "
+    var a = 10
+    function f(a) {
+      var ret = 0
+      for(var i = 1; ; i++) {
+        if (i > a) break
+        ret += i
+      }
+      return ret
+    }
+    var b = f(a)
+    assert_num_eq(10, a)
+    assert_num_eq(55, b)
     ",
     );
 
