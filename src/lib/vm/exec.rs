@@ -77,30 +77,6 @@ impl JsFunction {
   }
 }
 
-pub struct LocalScope {
-  vals: HashSet<JsObjPtr>,
-}
-
-impl LocalScope {
-  pub fn new() -> Self {
-    LocalScope {
-      vals: HashSet::new(),
-    }
-  }
-
-  pub fn reg<T>(&mut self, v: *mut T) -> JsObjPtr {
-    let v = v as JsObjPtr;
-    self.vals.insert(v);
-    v
-  }
-}
-
-impl Drop for LocalScope {
-  fn drop(&mut self) {
-    self.vals.iter().for_each(|v| as_obj(*v).dec())
-  }
-}
-
 impl Gc {
   pub fn new_fun_native(&mut self, f: NativeFn, is_root: bool) -> JsFunPtr {
     let nf = self.new_fun(is_root);
@@ -266,7 +242,16 @@ impl Vm {
   }
 
   fn get_stack_item(&self, i: u32) -> JsObjPtr {
-    *self.s.get(i as usize).unwrap()
+    match self.s.get(i as usize) {
+      Some(v) => {
+        if v.is_null() {
+          self.gc.js_undef()
+        } else {
+          *v
+        }
+      }
+      _ => self.gc.js_undef(),
+    }
   }
 
   fn get_upval(&self, i: u32) -> UpValPtr {
@@ -402,6 +387,20 @@ impl Vm {
         let v = self.get_stack_item(base + i.b());
         self.set_stack_slot(base + i.a(), v);
       }
+      OpCode::TEST => {
+        let base = as_ci(self.ci).base;
+        let v = self.get_stack_item(base + i.b());
+        let b = as_obj(v).t_bool();
+        let c = i.c();
+        let eq = if c == 1 {
+          as_obj(b).eqs_true()
+        } else {
+          as_obj(b).eqs_false()
+        };
+        if eq {
+          as_ci(self.ci).pc += 1;
+        }
+      }
       OpCode::TESTSET => {
         let base = as_ci(self.ci).base;
         let b = self.get_stack_item(base + i.b());
@@ -422,6 +421,45 @@ impl Vm {
       OpCode::JMP => {
         let pc = as_ci(self.ci).pc as i32;
         as_ci(self.ci).pc = (pc + i.sbx()) as u32;
+      }
+      OpCode::LOADBOO => {
+        let base = as_ci(self.ci).base;
+        let b = if i.b() == 1 {
+          self.gc.js_true()
+        } else {
+          self.gc.js_false()
+        };
+        self.set_stack_slot(base + i.a(), b);
+        if i.c() == 1 {
+          as_ci(self.ci).pc += 1;
+        }
+      }
+      OpCode::EQ | OpCode::LT | OpCode::LE => {
+        let mut ls = LocalScope::new();
+        let base = as_ci(self.ci).base;
+        let b = self.get_stack_item(base + i.b());
+        let (b, is_new) = self.x_rk(base, i.b());
+        if is_new {
+          ls.reg(b);
+        }
+        let (c, is_new) = self.x_rk(base, i.c());
+        if is_new {
+          ls.reg(c);
+        }
+        println!("{:#?} {:#?}", as_num(b), as_num(c));
+        let com = match op {
+          OpCode::EQ => {
+            if GcObj::eq(b, c) {
+              1
+            } else {
+              0
+            }
+          }
+          _ => unimplemented!(),
+        };
+        if com != i.a() {
+          as_ci(self.ci).pc += 1;
+        }
       }
       OpCode::ADD | OpCode::SUB | OpCode::MUL | OpCode::DIV | OpCode::MOD => {
         let mut ls = LocalScope::new();
@@ -641,6 +679,32 @@ mod exec_tests {
     var e = a / b - c
     assert_num_eq(7, d)
     assert_num_eq(-2.5, e)  
+    ",
+    );
+
+    let mut vm = new_vm(chk);
+    vm.exec();
+  }
+
+  #[test]
+  fn if_else_test() {
+    let chk = Codegen::gen(
+      "
+    a = 2
+    if (a == 1) {
+      c = 4
+    } else if (a == 2) {
+      c = 5
+    }
+    assert_num_eq(5, c)
+    
+    a = 0
+    if (a) b = 1 else b = 0
+    assert_num_eq(0, b)
+
+    a = 1
+    if (a) b = 1 else b = 0
+    assert_num_eq(1, b)
     ",
     );
 

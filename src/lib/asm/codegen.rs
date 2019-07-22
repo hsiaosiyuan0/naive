@@ -593,7 +593,7 @@ impl AstVisitor<(), CodegenError> for Codegen {
     let mut test = Inst::new();
     test.set_op(OpCode::TEST);
     test.set_a(tr);
-    test.set_c(0);
+    test.set_c(1);
     fs.push_inst(test);
     fs.free_reg_to(tr);
 

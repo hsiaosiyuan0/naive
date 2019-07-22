@@ -1,5 +1,6 @@
 use crate::vm::gc::*;
 use std::f64;
+use std::ptr::eq;
 
 impl GcObj {
   pub fn eqs_true(&mut self) -> bool {
@@ -13,6 +14,7 @@ impl GcObj {
   }
 
   pub fn t_pri(&mut self) -> JsObjPtr {
+    as_obj(self).inc();
     as_obj_ptr(self)
   }
 
@@ -36,10 +38,8 @@ impl GcObj {
         as_obj_ptr(self) as JsNumPtr
       }
       GcObjKind::String => {
-        let s = as_str(self);
-        let f: f64 = s.d.parse().ok().unwrap();
         let n = gc.new_num(false);
-        as_num(n).d = f;
+        as_num(n).set_v_str(as_str(self));
         n
       }
       _ => as_obj(self.t_pri()).t_num(),
@@ -68,5 +68,88 @@ impl GcObj {
       }
       _ => gc.js_true(),
     }
+  }
+
+  pub fn is_compound(&self) -> bool {
+    match self.kind {
+      GcObjKind::String
+      | GcObjKind::Number
+      | GcObjKind::Boolean
+      | GcObjKind::Null
+      | GcObjKind::Undef => false,
+      _ => true,
+    }
+  }
+
+  pub fn eq(a: JsObjPtr, b: JsObjPtr) -> bool {
+    let gc = as_gc(as_obj(a).gc());
+    let mut local_scope = LocalScope::new();
+    let ta = as_obj(a).kind;
+    let tb = as_obj(b).kind;
+
+    if ta == tb {
+      if ta == GcObjKind::Undef {
+        return true;
+      } else if ta == GcObjKind::Null {
+        return true;
+      } else if ta == GcObjKind::Number {
+        let av = as_num(a).d;
+        let bv = as_num(b).d;
+        if av.is_nan() {
+          return false;
+        }
+        if bv.is_nan() {
+          return false;
+        }
+        return av == bv;
+      } else if ta == GcObjKind::String {
+        let av = &as_str(a).d;
+        let bv = &as_str(b).d;
+        return av == bv;
+      } else if ta == GcObjKind::Boolean {
+        return a == b;
+      }
+    } else {
+      if ta == GcObjKind::Undef && tb == GcObjKind::Null
+        || ta == GcObjKind::Null && tb == GcObjKind::Undef
+      {
+        return true;
+      }
+      if ta == GcObjKind::Number && tb == GcObjKind::String {
+        let nb = gc.new_num(false);
+        local_scope.reg(nb);
+        as_num(b).set_v_str(as_str(b));
+        return as_num(a).eq(nb);
+      }
+      if ta == GcObjKind::String && tb == GcObjKind::Number {
+        let na = gc.new_num(false);
+        local_scope.reg(na);
+        as_num(na).set_v_str(as_str(a));
+        return as_num(b).eq(na);
+      }
+      if ta == GcObjKind::Boolean {
+        let na = gc.new_num(false);
+        local_scope.reg(na);
+        as_num(na).set_v_bool(a);
+        return GcObj::eq(as_obj_ptr(na), b);
+      }
+      if tb == GcObjKind::Boolean {
+        let nb = gc.new_num(false);
+        local_scope.reg(nb);
+        as_num(nb).set_v_bool(b);
+        return GcObj::eq(a, as_obj_ptr(nb));
+      }
+      if (ta == GcObjKind::Number || ta == GcObjKind::String) && as_obj(b).is_compound() {
+        let pri = as_obj(b).t_pri();
+        local_scope.reg(pri);
+        return GcObj::eq(a, pri);
+      }
+      if (tb == GcObjKind::Number || tb == GcObjKind::String) && as_obj(a).is_compound() {
+        let pri = as_obj(a).t_pri();
+        local_scope.reg(pri);
+        return GcObj::eq(b, pri);
+      }
+    }
+    return false;
   }
 }

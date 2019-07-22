@@ -66,7 +66,7 @@ pub fn as_gc<T>(ptr: *mut T) -> &'static mut Gc {
 }
 
 #[repr(C)]
-#[derive(Debug, Eq, PartialEq, Clone)]
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum GcObjKind {
   String,
   Number,
@@ -595,6 +595,30 @@ impl Drop for Gc {
         self.dec(p);
       }
     }
+  }
+}
+
+pub struct LocalScope {
+  vals: HashSet<JsObjPtr>,
+}
+
+impl LocalScope {
+  pub fn new() -> Self {
+    LocalScope {
+      vals: HashSet::new(),
+    }
+  }
+
+  pub fn reg<T>(&mut self, v: *mut T) -> JsObjPtr {
+    let v = v as JsObjPtr;
+    self.vals.insert(v);
+    v
+  }
+}
+
+impl Drop for LocalScope {
+  fn drop(&mut self) {
+    self.vals.iter().for_each(|v| as_obj(*v).dec())
   }
 }
 
