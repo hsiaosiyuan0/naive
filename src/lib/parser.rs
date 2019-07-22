@@ -1378,6 +1378,15 @@ pub enum ParsingError {
   Lexer(LexError),
 }
 
+impl ParsingError {
+  pub fn msg(&self) -> &str {
+    match self {
+      ParsingError::Parser(e) => e.msg.as_str(),
+      ParsingError::Lexer(e) => e.msg.as_str(),
+    }
+  }
+}
+
 impl From<ParserError> for ParsingError {
   fn from(e: ParserError) -> Self {
     ParsingError::Parser(e)

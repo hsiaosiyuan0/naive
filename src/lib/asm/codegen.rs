@@ -340,7 +340,10 @@ impl Codegen {
     let src = Source::new(&code);
     let mut lexer = Lexer::new(src);
     let mut parser = Parser::new(&mut lexer);
-    let ast = parser.prog().ok().unwrap();
+    let ast = match parser.prog() {
+      Ok(node) => node,
+      Err(e) => panic!(e.msg().to_owned()),
+    };
 
     let mut symtab = SymTab::new();
     symtab.prog(&ast).unwrap();
@@ -710,7 +713,7 @@ impl AstVisitor<(), CodegenError> for Codegen {
     let mut t = Inst::new();
     t.set_op(OpCode::TEST);
     t.set_a(tr);
-    t.set_c(0);
+    t.set_c(1);
     fs.push_inst(t);
 
     // jmp out of loop

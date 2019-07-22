@@ -490,7 +490,7 @@ impl Vm {
       OpCode::CALL => {
         let fi = as_ci(self.ci).base + i.a();
         let fp = self.get_stack_item(fi);
-        assert_eq!(as_obj(fp).kind, GcObjKind::Function);
+        assert_eq!(as_obj(fp).kind, GcObjKind::Function, "undue call");
         let f = as_fun(fp);
 
         let ci = CallInfo::new();
@@ -775,6 +775,62 @@ mod exec_tests {
     var b = f(a)
     assert_num_eq(10, a)
     assert_num_eq(55, b)
+    ",
+    );
+
+    let mut vm = new_vm(chk);
+    vm.exec();
+  }
+
+  #[test]
+  fn while_test() {
+    let chk = Codegen::gen(
+      "
+    function f(a, b) {
+      var ret = 0;
+      var i = 1;
+      while (i <= b) {
+        ret += i
+        ++i
+      }
+      return ret
+    }
+    var a = f(1, 10)
+    assert_num_eq(55, a)
+
+    function f1(a, b) {
+      var ret = 0;
+      while (true) {
+        if (b == 0) break;
+        ret += b
+        b--
+      }
+      return ret
+    }
+    var a = f1(1, 10)
+    assert_num_eq(55, a)
+    ",
+    );
+
+    let mut vm = new_vm(chk);
+    vm.exec();
+  }
+
+  #[test]
+  fn do_while_test() {
+    let chk = Codegen::gen(
+      "
+    function f(a, b) {
+      var ret = 0;
+      do {
+        ret += b
+        b--
+        if (b == 0) break
+      } while (true)
+      return ret
+    }
+    var a = f(1, 10)
+    assert_num_eq(55, a)
     ",
     );
 

@@ -21,7 +21,7 @@ pub struct Lexer<'a> {
 
 #[derive(Debug)]
 pub struct LexError {
-  msg: String,
+  pub msg: String,
 }
 
 impl LexError {
