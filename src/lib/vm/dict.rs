@@ -11,11 +11,12 @@ impl JsDict {
     self.d.insert(k.to_owned(), v);
   }
 
-  pub fn get(&self, k: JsObjPtr) -> JsObjPtr {
+  pub fn get(&mut self, k: JsObjPtr) -> JsObjPtr {
+    let gc = as_gc(as_obj(self).gc());
     let k = as_str(k).d.as_str();
     match self.d.get(k) {
       Some(v) => *v,
-      None => js_undef(),
+      None => gc.js_undef(),
     }
   }
 }

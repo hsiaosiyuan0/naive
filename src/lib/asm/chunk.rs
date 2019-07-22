@@ -66,7 +66,7 @@ impl Const {
 }
 
 #[derive(Debug, Clone)]
-pub struct Upval {
+pub struct UpvalDesc {
   pub name: String,
   pub in_stack: bool,
   pub idx: u32,
@@ -221,7 +221,7 @@ pub struct FnTpl {
   pub is_vararg: bool,
   pub code: Vec<Inst>,
   pub consts: Vec<Const>,
-  pub upvals: Vec<Upval>,
+  pub upvals: Vec<UpvalDesc>,
   pub locals: Vec<Local>,
   pub fun_tpls: Vec<FnTpl>,
 }

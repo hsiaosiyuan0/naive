@@ -1,6 +1,7 @@
 use crate::ast::*;
 use crate::visitor::AstVisitor;
-use std::collections::{HashMap, HashSet};
+use linked_hash_set::LinkedHashSet;
+use std::collections::HashMap;
 use std::ptr::{drop_in_place, null_mut};
 
 pub type ScopePtr = *mut Scope;
@@ -14,7 +15,7 @@ pub struct Scope {
   pub id: usize,
   parent: ScopePtr,
   subs: Vec<ScopePtr>,
-  pub bindings: HashSet<String>,
+  pub bindings: LinkedHashSet<String>,
 }
 
 impl Scope {
@@ -23,7 +24,7 @@ impl Scope {
       id,
       parent: null_mut(),
       subs: vec![],
-      bindings: HashSet::new(),
+      bindings: LinkedHashSet::new(),
     }))
   }
 

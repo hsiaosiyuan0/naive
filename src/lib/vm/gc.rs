@@ -1,4 +1,5 @@
 use crate::asm::chunk::*;
+use linked_hash_set::LinkedHashSet;
 use std::collections::{HashMap, HashSet};
 use std::mem;
 use std::os::raw::c_void;
@@ -7,7 +8,7 @@ use std::sync::Once;
 
 pub type GcObjPtr = *mut GcObj;
 pub type JsObj = GcObj;
-pub type JsObjPtr = *mut JsObj;
+pub type JsObjPtr = GcObjPtr;
 
 pub type JsStrPtr = *mut JsString;
 pub type JsNumPtr = *mut JsNumber;
@@ -101,6 +102,10 @@ impl GcObj {
 
   pub fn dec(&mut self) {
     as_gc(self.gc).dec(self);
+  }
+
+  pub fn gc(&self) -> GcPtr {
+    self.gc
   }
 }
 
@@ -297,10 +302,12 @@ pub struct JsFunction {
 fn js_fun_deinit(ptr: JsObjPtr) {
   let r = as_fun(ptr);
   let s = mem::size_of_val(r);
+
+  r.upvals.iter().for_each(|uv| as_obj(*uv).dec());
+
   unsafe {
     drop_in_place(r);
   }
-  // TODO:: dec upvalues
   as_gc(r.base.gc).heap_size -= s;
 }
 
@@ -327,20 +334,78 @@ impl JsFunction {
 pub struct Gc {
   heap_size: usize,
   max_heap_size: usize,
-  obj_list: HashSet<GcObjPtr>,
+  obj_list: LinkedHashSet<GcObjPtr>,
   roots: HashSet<GcObjPtr>,
   marked: Vec<GcObjPtr>,
+  js_null_: JsObjPtr,
+  js_undef_: JsObjPtr,
+  js_true_: JsObjPtr,
+  js_false_: JsObjPtr,
 }
 
+static INIT_GC_DATA_ONCE: Once = Once::new();
+
 impl Gc {
-  pub fn new(max_heap_size: usize) -> Self {
-    Gc {
+  pub fn new(max_heap_size: usize) -> Box<Self> {
+    let mut gc = Box::new(Gc {
       heap_size: 0,
       max_heap_size,
-      obj_list: HashSet::new(),
+      obj_list: LinkedHashSet::new(),
       roots: HashSet::new(),
       marked: vec![],
-    }
+      js_null_: null_mut(),
+      js_undef_: null_mut(),
+      js_true_: null_mut(),
+      js_false_: null_mut(),
+    });
+    gc.init_data();
+    gc
+  }
+
+  fn init_data(&mut self) {
+    self.js_null_ = Box::into_raw(Box::new(GcObj {
+      ref_cnt: 1,
+      kind: GcObjKind::Null,
+      gc: self as GcPtr,
+      deinit: default_deinit,
+    }));
+
+    self.js_undef_ = Box::into_raw(Box::new(GcObj {
+      ref_cnt: 1,
+      kind: GcObjKind::Undef,
+      gc: self as GcPtr,
+      deinit: default_deinit,
+    }));
+
+    self.js_true_ = Box::into_raw(Box::new(GcObj {
+      ref_cnt: 1,
+      kind: GcObjKind::Boolean,
+      gc: self as GcPtr,
+      deinit: default_deinit,
+    }));
+
+    self.js_false_ = Box::into_raw(Box::new(GcObj {
+      ref_cnt: 1,
+      kind: GcObjKind::Boolean,
+      gc: self as GcPtr,
+      deinit: default_deinit,
+    }));
+  }
+
+  pub fn js_null(&self) -> JsObjPtr {
+    self.js_null_
+  }
+
+  pub fn js_undef(&self) -> JsObjPtr {
+    self.js_undef_
+  }
+
+  pub fn js_true(&self) -> JsObjPtr {
+    self.js_true_
+  }
+
+  pub fn js_false(&self) -> JsObjPtr {
+    self.js_false_
   }
 
   pub fn new_str(&mut self, is_root: bool) -> JsStrPtr {
@@ -424,8 +489,18 @@ impl Gc {
   }
 
   pub fn dec<T>(&mut self, ptr: *mut T) {
+    let ptr = ptr as JsObjPtr;
+    if !self.obj_list.contains(&ptr) {
+      return;
+    }
+
     let obj = as_obj(ptr);
-    assert!(obj.ref_cnt > 0);
+    match obj.kind {
+      GcObjKind::Null | GcObjKind::Undef | GcObjKind::Boolean => return,
+      _ => (),
+    }
+    let em = format!("dropping dangling object {:#?} {:#?}", ptr, obj);
+    assert!(obj.ref_cnt > 0, em);
     obj.ref_cnt -= 1;
     if obj.ref_cnt == 0 {
       self.drop(ptr);
@@ -433,16 +508,19 @@ impl Gc {
   }
 
   pub fn drop<T>(&mut self, ptr: *mut T) {
+    let ptr = ptr as JsObjPtr;
     let obj = as_obj(ptr);
-    assert!(self.obj_list.remove(&(ptr as GcObjPtr)));
-    self.roots.remove(&(ptr as GcObjPtr));
+    self.obj_list.remove(&ptr);
+    self.roots.remove(&ptr);
     (obj.deinit)(obj);
   }
 
   pub fn xgc(&mut self, need: usize) {
     let s = self.heap_size + need;
     if s >= self.max_heap_size {
+      println!("{:#?}", self.heap_size);
       self.gc();
+      println!("{:#?}", self.heap_size);
       assert!(self.heap_size + need <= self.max_heap_size);
     }
   }
@@ -480,8 +558,11 @@ impl Gc {
           GcObjKind::UpVal => {
             self.marked.push(as_uv(obj).v);
           }
-          // TODO::
-          GcObjKind::Function => (),
+          GcObjKind::Function => {
+            for pp in &as_fun(obj).upvals {
+              self.marked.push(as_obj_ptr(*pp))
+            }
+          }
         }
       }
     }
@@ -517,64 +598,9 @@ impl Drop for Gc {
   }
 }
 
-static mut JS_NULL: JsObjPtr = null_mut();
-static mut JS_UNDEF: JsObjPtr = null_mut();
-static mut JS_TRUE: JsObjPtr = null_mut();
-static mut JS_FALSE: JsObjPtr = null_mut();
-
-pub fn js_null() -> JsObjPtr {
-  unsafe { JS_NULL }
-}
-
-pub fn js_undef() -> JsObjPtr {
-  unsafe { JS_UNDEF }
-}
-
-pub fn js_true() -> JsObjPtr {
-  unsafe { JS_TRUE }
-}
-
-pub fn js_false() -> JsObjPtr {
-  unsafe { JS_FALSE }
-}
-
-static INIT_GC_DATA_ONCE: Once = Once::new();
-pub fn init_gc_data() {
-  INIT_GC_DATA_ONCE.call_once(|| unsafe {
-    JS_NULL = Box::into_raw(Box::new(GcObj {
-      ref_cnt: 1,
-      kind: GcObjKind::Null,
-      gc: null_mut(),
-      deinit: default_deinit,
-    }));
-
-    JS_UNDEF = Box::into_raw(Box::new(GcObj {
-      ref_cnt: 1,
-      kind: GcObjKind::Undef,
-      gc: null_mut(),
-      deinit: default_deinit,
-    }));
-
-    JS_TRUE = Box::into_raw(Box::new(GcObj {
-      ref_cnt: 1,
-      kind: GcObjKind::Boolean,
-      gc: null_mut(),
-      deinit: default_deinit,
-    }));
-
-    JS_FALSE = Box::into_raw(Box::new(GcObj {
-      ref_cnt: 1,
-      kind: GcObjKind::Boolean,
-      gc: null_mut(),
-      deinit: default_deinit,
-    }));
-  });
-}
-
 #[cfg(test)]
 mod gc_tests {
   use super::*;
-  use crate::asm::codegen::*;
 
   #[test]
   fn str_test() {

@@ -62,7 +62,7 @@ impl Dumper {
     }
   }
 
-  fn w_upval(&mut self, u: &Upval) {
+  fn w_upval(&mut self, u: &UpvalDesc) {
     self.w_byte(u.in_stack as u8);
     self.w_u32(u.idx);
   }
@@ -86,7 +86,7 @@ impl Dumper {
     cs.iter().for_each(|c| self.w_const(c));
   }
 
-  fn w_upvals(&mut self, uvs: &Vec<Upval>) {
+  fn w_upvals(&mut self, uvs: &Vec<UpvalDesc>) {
     self.w_u64(uvs.len() as u64);
     uvs.iter().for_each(|uv| self.w_upval(uv));
   }

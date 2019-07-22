@@ -6,8 +6,9 @@ use crate::parser::*;
 use crate::source::*;
 use crate::token::*;
 use crate::visitor::AstVisitor;
+use linked_hash_set::LinkedHashSet;
 use std::cmp::min;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::ptr::{drop_in_place, null_mut};
 use std::sync::Once;
 
@@ -101,7 +102,7 @@ impl FnState {
     false
   }
 
-  pub fn get_upval(&self, n: &str) -> Option<&Upval> {
+  pub fn get_upval(&self, n: &str) -> Option<&UpvalDesc> {
     for uv in &self.tpl.upvals {
       if uv.name.eq(n) {
         return Some(uv);
@@ -114,64 +115,44 @@ impl FnState {
     self.tpl.upvals.iter().position(|uv| uv.name.eq(n)).unwrap()
   }
 
-  // adds upval with name provided by parameter `n` and returns `true` if possible
-  // otherwise add `ENV` as a upval and returns `false`
   pub fn add_upval(&mut self, n: &str) -> bool {
     if self.has_upval(n) {
       return true;
     }
-    let mut spans: Vec<FnStatePtr> = vec![self as FnStatePtr];
-    let mut parent = self.parent;
-    let mut uv: Option<Upval> = None;
-    while !parent.is_null() {
-      let pfs = as_fn_state(parent);
-      if pfs.has_local(n) {
-        let immediate = spans.pop().unwrap();
-        let immediate = as_fn_state(immediate);
-        let mut v = Upval {
-          name: n.to_string(),
-          in_stack: true,
-          idx: pfs.local2reg(n),
-        };
-        immediate.tpl.upvals.push(v.clone());
-        v.in_stack = false;
-        uv = Some(v);
-        break;
-      } else if pfs.has_upval(n) {
-        let mut v = pfs.get_upval(n).unwrap().clone();
-        v.in_stack = false;
-        uv = Some(v);
-        break;
-      }
-      parent = pfs.parent;
-    }
-    if uv.is_none() {
-      if let Some(last) = spans.pop() {
-        let fs = as_fn_state(last);
-        if fs.parent.is_null() && !fs.has_upval(ENV_NAME) {
-          fs.tpl.upvals.push(Upval {
-            name: ENV_NAME.to_string(),
-            in_stack: true,
-            idx: 0,
-          });
-        }
-      }
-      spans.iter().for_each(|fs| {
-        let fs = as_fn_state(*fs);
-        fs.tpl.upvals.push(Upval {
+    let parent = self.parent;
+    if parent.is_null() {
+      if !self.has_upval(ENV_NAME) {
+        self.tpl.upvals.push(UpvalDesc {
           name: ENV_NAME.to_string(),
-          in_stack: false,
+          in_stack: true,
           idx: 0,
         });
-      });
+      }
       return false;
+    } else {
+      let parent = as_fn_state(parent);
+      if parent.has_local(n) {
+        self.tpl.upvals.push(UpvalDesc {
+          name: n.to_string(),
+          in_stack: true,
+          idx: parent.local2reg(n),
+        });
+        return true;
+      } else {
+        let is_up = parent.add_upval(n);
+        if is_up {
+          self.tpl.upvals.push(UpvalDesc {
+            name: n.to_string(),
+            in_stack: false,
+            idx: parent.get_upval_idx(n) as u32,
+          });
+          return true;
+        } else {
+          self.add_upval(ENV_NAME);
+          return false;
+        }
+      }
     }
-    let uv = uv.unwrap();
-    for span in spans {
-      let fs = as_fn_state(span);
-      fs.tpl.upvals.push(uv.clone());
-    }
-    true
   }
 
   pub fn has_const(&self, c: &Const) -> bool {
@@ -232,7 +213,6 @@ impl FnState {
   }
 
   fn fin_jmp_sbx(&mut self, idx: i32, sbx: i32) {
-    let cl = self.code_len();
     let jmp = self.tpl.code.get_mut(idx as usize).unwrap();
     jmp.set_sbx(sbx);
   }
@@ -401,11 +381,15 @@ impl Codegen {
     as_scope(self.symtab.get_scope(fs.id))
   }
 
+  fn is_root_scope(&self) -> bool {
+    self.symtab_scope().id == 0
+  }
+
   fn has_binding(&self, n: &str) -> bool {
     self.symtab_scope().has_binding(n)
   }
 
-  fn bindings(&self) -> &'static HashSet<String> {
+  fn bindings(&self) -> &'static LinkedHashSet<String> {
     &self.symtab_scope().bindings
   }
 
@@ -413,32 +397,19 @@ impl Codegen {
     let fs = self.fs_ref();
 
     let bindings = self.bindings();
-    // in js, we cannot declare values in root scope, the values looks in root scope are
-    // just the alias of the fields of the global object, so if the scope id
-    // indicates that it's root scope then we should add it's bindings as upvalues
-    if self.symtab_scope().id == 0 {
-      bindings
-        .iter()
-        .for_each(|name| assert!(fs.add_upval(name.as_str())));
-    } else if bindings.len() > 0 {
-      let mut i = 0;
-      let mut a = 0;
-      let mut b = 0;
+    if bindings.len() > 0 {
+      let a = fs.take_reg();
+      let mut b = a;
       bindings.iter().for_each(|name| {
-        let reg = fs.take_reg();
-        fs.def_local(name.as_str(), reg);
-        if i == 0 {
-          a = reg;
-        } else {
-          b = reg;
-        }
-        i += 1;
+        fs.def_local(name.as_str(), b);
+        b = fs.take_reg();
       });
       let mut inst = Inst::new();
       inst.set_op(OpCode::LOADUNDEF);
       inst.set_a(a);
-      inst.set_b(b);
+      inst.set_b(b - 1);
       fs.push_inst(inst);
+      fs.free_reg_to(b);
     }
   }
 
@@ -451,6 +422,14 @@ impl Codegen {
     }
     Ok(())
   }
+
+  fn append_ret_inst(&mut self) {
+    let mut ret = Inst::new();
+    ret.set_op(OpCode::RETURN);
+    ret.set_a(0);
+    ret.set_b(1);
+    self.fs_ref().push_inst(ret);
+  }
 }
 
 impl Drop for Codegen {
@@ -459,6 +438,17 @@ impl Drop for Codegen {
       drop_in_place(self.fs);
     }
   }
+}
+
+fn new_set_global_inst(fs: &mut FnState, field_name: &str, val_reg: u32) -> Inst {
+  let mut inst = Inst::new();
+  inst.set_op(OpCode::SETTABUP);
+  inst.set_a(fs.get_upval(ENV_NAME).unwrap().idx);
+  let kst = Const::String(field_name.to_string());
+  fs.add_const(&kst);
+  inst.set_b(kst_id_rk(fs.const2idx(&kst)));
+  inst.set_c(val_reg);
+  inst
 }
 
 fn assign_upval(fs: &mut FnState, from_reg: u32, to_name: &str) -> Inst {
@@ -481,25 +471,25 @@ fn assign_upval(fs: &mut FnState, from_reg: u32, to_name: &str) -> Inst {
   }
 }
 
-fn load_upval(fs: &mut FnState, from_name: &str, to_reg: u32) -> Inst {
-  let has_def = fs.add_upval(from_name);
-  if has_def {
-    let mut inst = Inst::new();
-    inst.set_op(OpCode::GETUPVAL);
-    inst.set_a(to_reg);
-    inst.set_b(fs.get_upval(from_name).unwrap().idx);
-    inst
-  } else {
-    let mut inst = Inst::new();
-    inst.set_op(OpCode::GETTABUP);
-    inst.set_a(to_reg);
-    inst.set_b(fs.get_upval(ENV_NAME).unwrap().idx);
-    let kst = Const::String(from_name.to_string());
-    fs.add_const(&kst);
-    inst.set_c(kst_id_rk(fs.const2idx(&kst)));
-    inst
-  }
-}
+//fn load_upval(fs: &mut FnState, from_name: &str, to_reg: u32) -> Inst {
+//  let has_def = fs.add_upval(from_name);
+//  if has_def {
+//    let mut inst = Inst::new();
+//    inst.set_op(OpCode::GETUPVAL);
+//    inst.set_a(to_reg);
+//    inst.set_b(fs.get_upval(from_name).unwrap().idx);
+//    inst
+//  } else {
+//    let mut inst = Inst::new();
+//    inst.set_op(OpCode::GETTABUP);
+//    inst.set_a(to_reg);
+//    inst.set_b(fs.get_upval(ENV_NAME).unwrap().idx);
+//    let kst = Const::String(from_name.to_string());
+//    fs.add_const(&kst);
+//    inst.set_c(kst_id_rk(fs.const2idx(&kst)));
+//    inst
+//  }
+//}
 
 fn pop_last_loadk(fs: &mut FnState) -> Option<u32> {
   let last_inst = fs.tpl.code.last().unwrap();
@@ -542,7 +532,12 @@ impl AstVisitor<(), CodegenError> for Codegen {
     // declare values in root scope, the values in root scope just
     // alias of the fields of the global object
     let stmts = hoist(&prog.body);
-    self.stmts(&stmts)
+    match self.stmts(&stmts) {
+      Err(e) => return Err(e),
+      _ => (),
+    }
+    self.append_ret_inst();
+    Ok(())
   }
 
   fn block_stmt(&mut self, stmt: &BlockStmt) -> Result<(), CodegenError> {
@@ -825,6 +820,7 @@ impl AstVisitor<(), CodegenError> for Codegen {
 
     self.declare_bindings();
     self.stmt(&stmt.body).ok();
+    self.append_ret_inst();
 
     self.leave_fn_state();
     Ok(())
@@ -839,47 +835,14 @@ impl AstVisitor<(), CodegenError> for Codegen {
     }
 
     let mut inst = Inst::new();
-    match &expr.object {
-      Expr::Primary(pri) => {
-        if !pri.is_id() {
-          return Err(CodegenError::new("lhs must be LVal"));
-        }
-        let id = pri.id().name.as_str();
-        if fs.has_local(id) {
-          inst.set_op(OpCode::GETTABLE);
-          inst.set_a(res_reg);
-          inst.set_b(fs.local2reg(id));
-        } else {
-          let has_def = fs.add_upval(id);
-          let mut inst1 = load_upval(fs, id, res_reg);
-          if has_def {
-            inst1.set_op(OpCode::GETTABUP);
-            inst = inst1;
-          } else {
-            // get Gbl into temp register
-            let tr = fs.take_reg();
-            inst1.set_a(tr);
-            fs.push_inst(inst1);
-            tmp_regs.push(tr);
+    let tr = fs.take_reg();
+    fs.push_res_reg(tr);
+    self.expr(&expr.object).ok();
+    tmp_regs.push(tr);
 
-            // GETTABLE on above temp register
-            inst.set_op(OpCode::GETTABLE);
-            inst.set_a(res_reg);
-            inst.set_b(tr);
-          }
-        }
-      }
-      _ => {
-        let tr = fs.take_reg();
-        fs.push_res_reg(tr);
-        self.expr(&expr.object).ok();
-        tmp_regs.push(tr);
-
-        inst.set_op(OpCode::GETTABLE);
-        inst.set_a(res_reg);
-        inst.set_b(tr);
-      }
-    }
+    inst.set_op(OpCode::GETTABLE);
+    inst.set_a(res_reg);
+    inst.set_b(tr);
 
     if expr.computed {
       let tr = fs.take_reg();
@@ -921,18 +884,17 @@ impl AstVisitor<(), CodegenError> for Codegen {
     self.expr(&expr.callee).ok();
     tmp_regs.push(a);
 
-    let b = expr.arguments.len() + 1;
-    let mut i = 1;
     expr.arguments.iter().for_each(|arg| {
-      fs.push_res_reg(a + i);
+      let r = fs.take_reg();
+      fs.push_res_reg(r);
       self.expr(arg).ok();
-      i += 1;
+      tmp_regs.push(r);
     });
 
     let mut call = Inst::new();
     call.set_op(OpCode::CALL);
     call.set_a(a);
-    call.set_b(b as u32);
+    call.set_b((expr.arguments.len() + 1) as u32);
 
     let ret_num = if is_tmp { 1 } else { 2 };
     call.set_c(ret_num);
@@ -1180,49 +1142,12 @@ impl AstVisitor<(), CodegenError> for Codegen {
         }
       }
       Expr::Member(m) => {
-        match &m.object {
-          // if object is identifier then we estimate it's local or upval to generate
-          // SETTABLE or SETTABUP, this way we can directly manipulate it without loading
-          // it into a temp register firstly and then apply SETTABLE on the temp register
-          Expr::Primary(pri) => {
-            if !pri.is_id() {
-              return Err(CodegenError::new("lhs must be LVal"));
-            }
-            let id = pri.id().name.as_str();
-            if fs.has_local(id) {
-              inst.set_op(OpCode::SETTABLE);
-              inst.set_a(fs.local2reg(id));
-            } else {
-              let has_def = fs.add_upval(id);
-              if has_def {
-                inst.set_op(OpCode::SETTABUP);
-                inst.set_a(fs.get_upval(id).unwrap().idx)
-              } else {
-                let tr = fs.take_reg();
-                let mut get_gbl = Inst::new();
-                get_gbl.set_op(OpCode::GETTABUP);
-                get_gbl.set_a(tr);
-                get_gbl.set_b(fs.get_upval(ENV_NAME).unwrap().idx);
-                let kst = Const::new_str(id);
-                fs.add_const(&kst);
-                get_gbl.set_c(kst_id_rk(fs.const2idx(&kst)));
-                fs.push_inst(get_gbl);
-                tmp_regs.push(tr);
-
-                inst.set_op(OpCode::SETTABLE);
-                inst.set_a(tr);
-              }
-            }
-          }
-          _ => {
-            inst.set_op(OpCode::SETTABLE);
-            let tr = fs.take_reg();
-            fs.push_res_reg(tr);
-            self.expr(&m.object).ok();
-            inst.set_a(tr);
-            tmp_regs.push(tr);
-          }
-        }
+        inst.set_op(OpCode::SETTABLE);
+        let tr = fs.take_reg();
+        fs.push_res_reg(tr);
+        self.expr(&m.object).ok();
+        inst.set_a(tr);
+        tmp_regs.push(tr);
 
         if m.computed {
           let rb = fs.take_reg();
@@ -1240,21 +1165,22 @@ impl AstVisitor<(), CodegenError> for Codegen {
       _ => return Err(CodegenError::new("lhs must be LVal")),
     }
 
+    // is `operator=`
     if !expr.op.is_symbol_kind(Symbol::Assign) {
       let rb = fs.take_reg();
       fs.push_res_reg(rb);
       self.expr(&expr.left).ok();
       tmp_regs.push(rb);
 
-      let rk = rc;
-      rc = fs.take_reg();
+      let ra = fs.take_reg();
       let mut binop = Inst::new();
       binop.set_op(*symbol_to_opcode(expr.op.symbol_data().kind).unwrap());
-      binop.set_a(rc);
+      binop.set_a(ra);
       binop.set_b(rb);
-      binop.set_c(rk);
+      binop.set_c(rc);
       fs.push_inst(binop);
-      tmp_regs.push(rc);
+      tmp_regs.push(ra);
+      rc = ra;
     }
 
     let op = OpCode::from_u32(inst.op());
@@ -1265,6 +1191,7 @@ impl AstVisitor<(), CodegenError> for Codegen {
       _ => panic!(),
     }
     fs.push_inst(inst);
+
     if !is_res_tmp {
       let mut mov = Inst::new();
       mov.set_op(OpCode::MOVE);
@@ -1361,7 +1288,7 @@ impl AstVisitor<(), CodegenError> for Codegen {
         let mut inst = Inst::new();
         inst.set_op(OpCode::GETUPVAL);
         inst.set_a(res_reg);
-        inst.set_b(fs.get_upval(n).unwrap().idx);
+        inst.set_b(fs.get_upval_idx(n) as u32);
         fs.push_inst(inst);
       } else {
         let kst = Const::String(n.to_string());
@@ -1476,6 +1403,7 @@ impl AstVisitor<(), CodegenError> for Codegen {
 
     self.declare_bindings();
     self.stmt(&expr.body).ok();
+    self.append_ret_inst();
 
     self.leave_fn_state();
     Ok(())
@@ -2020,6 +1948,34 @@ mod codegen_tests {
     LOADUNDEF{ A: 0, B: 0, C: 0 },
     CLOSURE{ A: 0, B: 0, C: 0 },";
     assert_code_eq(insts, &codegen.fs_ref().get_sub(0).tpl.code);
+  }
+
+  #[test]
+  fn global_var_test() {
+    let ast = parse(
+      "
+    var a = 1
+    function f() {
+      return a
+    }
+    ",
+    );
+    let mut symtab = SymTab::new();
+    symtab.prog(&ast).unwrap();
+
+    let mut codegen = Codegen::new(symtab);
+    codegen.prog(&ast).ok();
+
+    let insts = "
+    CLOSURE{ A: 0, B: 0, C: 0 },
+    SETTABUP{ A: 0, B: 256, C: 0 },
+    SETTABUP{ A: 0, B: 258, C: 257 },";
+    assert_code_eq(insts, &codegen.fs_ref().tpl.code);
+
+    let insts = "
+    GETTABUP{ A: 0, B: 0, C: 256 },
+    RETURN{ A: 0, B: 2, C: 0 },";
+    assert_code_eq(insts, &as_fn_state(codegen.fs_ref().subs[0]).tpl.code);
   }
 
   #[test]
