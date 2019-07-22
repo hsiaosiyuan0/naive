@@ -138,7 +138,7 @@ impl Vm {
     self.gc.inc(v);
     let i = i as usize;
     if i > self.s.len() - 1 {
-      self.s.resize(i + 1, null_mut());
+      self.s.resize(i + 1, self.gc.js_undef());
     }
     match self.s.get(i) {
       Some(old) => {
@@ -150,7 +150,7 @@ impl Vm {
       _ => (),
     }
     self.gc.append_root(v);
-    mem::replace(&mut self.s[i], v);
+    self.s[i] = v;
   }
 
   fn get_fn(&self) -> Option<JsFunPtr> {
@@ -446,17 +446,13 @@ impl Vm {
         if is_new {
           ls.reg(c);
         }
-        println!("{:#?} {:#?}", as_num(b), as_num(c));
         let com = match op {
-          OpCode::EQ => {
-            if GcObj::eq(b, c) {
-              1
-            } else {
-              0
-            }
-          }
+          OpCode::EQ => GcObj::eq(b, c),
+          OpCode::LT => GcObj::lt(b, c),
+          OpCode::LE => GcObj::le(b, c),
           _ => unimplemented!(),
         };
+        let com = if com { 1 } else { 0 };
         if com != i.a() {
           as_ci(self.ci).pc += 1;
         }
@@ -554,7 +550,6 @@ mod exec_tests {
     print(native_fn())
     ",
     );
-    println!("{:#?}", &chk);
     let mut vm = Vm::new(chk, 1024);
 
     vm.register_native_fn("assert", |vm: VmPtr| {
@@ -663,7 +658,6 @@ mod exec_tests {
     ",
     );
 
-    println!("{:#?}", chk);
     let mut vm = new_vm(chk);
     vm.exec();
   }
@@ -708,7 +702,34 @@ mod exec_tests {
     ",
     );
 
-    println!("{:#?}", chk);
+    let mut vm = new_vm(chk);
+    vm.exec();
+  }
+
+  #[test]
+  fn lt_le_test() {
+    let chk = Codegen::gen(
+      "
+    b = 3
+    a = 1
+    if (a < 1) b = 0 else b = 1;
+    assert_num_eq(1, b)
+
+    b = 3
+    a = 1
+    if (a <= 1) b = 0 else b = 1;
+    assert_num_eq(0, b)
+
+    if (a >= 1) b = 0 else b = 1;
+    assert_num_eq(0, b)
+
+    a = 1
+    b = '1'
+    if (a == b) { b = 1 } else b = 0
+    assert_num_eq(1, b)
+    ",
+    );
+
     let mut vm = new_vm(chk);
     vm.exec();
   }

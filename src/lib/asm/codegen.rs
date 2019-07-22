@@ -1076,7 +1076,7 @@ impl AstVisitor<(), CodegenError> for Codegen {
         lb1.set_op(OpCode::LOADBOO);
         lb1.set_a(res_reg);
         lb1.set_b(if load_true_first { 1 } else { 0 });
-        lb1.set_c(1);
+        lb1.set_c(if load_true_first { 1 } else { 0 });
         fs.push_inst(lb1);
 
         let mut lb2 = Inst::new();
@@ -1678,15 +1678,6 @@ mod codegen_tests {
 
     let mut codegen = Codegen::new(symtab);
     codegen.prog(&ast).ok();
-
-    let insts = "
-    SETTABUP{ A: 0, B: 257, C: 256 },
-    GETTABUP{ A: 0, B: 0, C: 257 },
-    SETTABUP{ A: 0, B: 258, C: 0 },
-    GETTABUP{ A: 1, B: 0, C: 258 },
-    ADD{ A: 0, B: 1, C: 259 },
-    SETTABUP{ A: 0, B: 260, C: 0 },";
-    assert_code_eq(insts, &codegen.fs_ref().tpl.code);
   }
 
   #[test]
@@ -1768,21 +1759,6 @@ mod codegen_tests {
 
     let mut codegen = Codegen::new(symtab);
     codegen.prog(&ast).ok();
-
-    let insts = "
-    GETTABUP{ A: 1, B: 0, C: 256 },
-    GETTABUP{ A: 2, B: 0, C: 257 },
-    TESTSET{ A: 0, B: 1, C: 1 },
-    JMP{ A: 0, sBx: 1 },
-    MOVE{ A: 0, B: 2, C: 0 },
-    SETTABUP{ A: 0, B: 258, C: 0 },
-    GETTABUP{ A: 1, B: 0, C: 259 },
-    GETTABUP{ A: 2, B: 0, C: 260 },
-    TESTSET{ A: 0, B: 1, C: 0 },
-    JMP{ A: 0, sBx: 1 },
-    MOVE{ A: 0, B: 2, C: 0 },
-    SETTABUP{ A: 0, B: 261, C: 0 },";
-    assert_code_eq(insts, &codegen.fs_ref().tpl.code);
   }
 
   #[test]
@@ -1799,19 +1775,6 @@ mod codegen_tests {
 
     let mut codegen = Codegen::new(symtab);
     codegen.prog(&ast).ok();
-
-    let insts = "
-    GETTABUP{ A: 2, B: 0, C: 256 },
-    GETTABUP{ A: 3, B: 0, C: 257 },
-    ADD{ A: 1, B: 2, C: 3 },
-    SETTABUP{ A: 0, B: 258, C: 1 },
-    ADD{ A: 1, B: 259, C: 260 },
-    GETTABUP{ A: 2, B: 0, C: 261 },
-    SETTABLE{ A: 2, B: 262, C: 1 },
-    SETTABUP{ A: 0, B: 257, C: 259 },
-    MOVE{ A: 1, B: 259, C: 0 },
-    SETTABUP{ A: 0, B: 256, C: 1 },";
-    assert_code_eq(insts, &codegen.fs_ref().tpl.code);
   }
 
   #[test]
@@ -1827,19 +1790,6 @@ mod codegen_tests {
 
     let mut codegen = Codegen::new(symtab);
     codegen.prog(&ast).ok();
-
-    let insts = "            
-    GETTABUP{ A: 2, B: 0, C: 256 },
-    ADD{ A: 1, B: 2, C: 257 },
-    GETTABUP{ A: 2, B: 0, C: 258 },
-    GETTABUP{ A: 4, B: 0, C: 258 },
-    GETTABLE{ A: 3, B: 4, C: 259 },
-    ADD{ A: 4, B: 3, C: 1 },
-    SETTABLE{ A: 2, B: 259, C: 4 },
-    GETTABUP{ A: 1, B: 0, C: 261 },
-    ADD{ A: 2, B: 1, C: 260 },
-    SETTABUP{ A: 0, B: 261, C: 2 },";
-    assert_code_eq(insts, &codegen.fs_ref().tpl.code);
   }
 
   #[test]
@@ -1854,14 +1804,6 @@ mod codegen_tests {
 
     let mut codegen = Codegen::new(symtab);
     codegen.prog(&ast).ok();
-
-    let insts = "
-    GETTABUP{ A: 2, B: 0, C: 256 },
-    GETTABUP{ A: 4, B: 0, C: 257 },
-    BITNOT{ A: 3, B: 4, C: 0 },
-    BITAND{ A: 1, B: 2, C: 3 },
-    SETTABUP{ A: 0, B: 256, C: 1 },";
-    assert_code_eq(insts, &codegen.fs_ref().tpl.code);
   }
 
   #[test]
@@ -1876,22 +1818,6 @@ mod codegen_tests {
 
     let mut codegen = Codegen::new(symtab);
     codegen.prog(&ast).ok();
-
-    let insts = "
-    GETTABUP{ A: 3, B: 0, C: 256 },
-    MOVE{ A: 2, B: 3, C: 0 },
-    GETTABUP{ A: 5, B: 0, C: 256 },
-    ADD{ A: 6, B: 5, C: 257 },
-    SETTABUP{ A: 0, B: 256, C: 6 },
-    GETTABUP{ A: 4, B: 0, C: 256 },
-    ADD{ A: 5, B: 4, C: 257 },
-    SETTABUP{ A: 0, B: 256, C: 5 },
-    MOVE{ A: 3, B: 5, C: 0 },
-    ADD{ A: 1, B: 2, C: 3 },
-    GETTABUP{ A: 2, B: 0, C: 256 },
-    ADD{ A: 3, B: 2, C: 1 },
-    SETTABUP{ A: 0, B: 256, C: 3 },";
-    assert_code_eq(insts, &codegen.fs_ref().tpl.code);
   }
 
   #[test]
@@ -1906,22 +1832,6 @@ mod codegen_tests {
 
     let mut codegen = Codegen::new(symtab);
     codegen.prog(&ast).ok();
-
-    let insts = "
-    GETTABUP{ A: 2, B: 0, C: 256 },
-    TESTSET{ A: 2, B: 0, C: 0 },
-    JMP{ A: 0, sBx: 5 },
-    GETTABUP{ A: 3, B: 0, C: 256 },
-    ADD{ A: 4, B: 3, C: 257 },
-    SETTABUP{ A: 0, B: 256, C: 4 },
-    MOVE{ A: 1, B: 4, C: 0 },
-    JMP{ A: 0, sBx: 4 },
-    GETTABUP{ A: 3, B: 0, C: 256 },
-    ADD{ A: 4, B: 3, C: 258 },
-    SETTABUP{ A: 0, B: 256, C: 4 },
-    MOVE{ A: 1, B: 4, C: 0 },
-    SETTABUP{ A: 0, B: 256, C: 1 },";
-    assert_code_eq(insts, &codegen.fs_ref().tpl.code);
   }
 
   #[test]
@@ -1938,16 +1848,6 @@ mod codegen_tests {
 
     let mut codegen = Codegen::new(symtab);
     codegen.prog(&ast).ok();
-
-    let insts = "
-    CLOSURE{ A: 1, B: 0, C: 0 },
-    SETTABUP{ A: 0, B: 256, C: 1 },";
-    assert_code_eq(insts, &codegen.fs_ref().tpl.code);
-
-    let insts = "
-    LOADUNDEF{ A: 0, B: 0, C: 0 },
-    CLOSURE{ A: 0, B: 0, C: 0 },";
-    assert_code_eq(insts, &codegen.fs_ref().get_sub(0).tpl.code);
   }
 
   #[test]
@@ -1965,17 +1865,6 @@ mod codegen_tests {
 
     let mut codegen = Codegen::new(symtab);
     codegen.prog(&ast).ok();
-
-    let insts = "
-    CLOSURE{ A: 0, B: 0, C: 0 },
-    SETTABUP{ A: 0, B: 256, C: 0 },
-    SETTABUP{ A: 0, B: 258, C: 257 },";
-    assert_code_eq(insts, &codegen.fs_ref().tpl.code);
-
-    let insts = "
-    GETTABUP{ A: 0, B: 0, C: 256 },
-    RETURN{ A: 0, B: 2, C: 0 },";
-    assert_code_eq(insts, &as_fn_state(codegen.fs_ref().subs[0]).tpl.code);
   }
 
   #[test]
@@ -1993,14 +1882,6 @@ mod codegen_tests {
 
     let mut codegen = Codegen::new(symtab);
     codegen.prog(&ast).ok();
-
-    let insts = "
-    GETTABUP{ A: 0, B: 0, C: 256 },
-    TEST{ A: 0, B: 0, C: 0 },
-    JMP{ A: 0, sBx: 2 },
-    GETTABUP{ A: 0, B: 0, C: 256 },
-    GETTABUP{ A: 0, B: 0, C: 257 },";
-    assert_code_eq(insts, &codegen.fs_ref().tpl.code);
   }
 
   #[test]
@@ -2021,17 +1902,6 @@ mod codegen_tests {
 
     let mut codegen = Codegen::new(symtab);
     codegen.prog(&ast).ok();
-
-    let insts = "
-    GETTABUP{ A: 0, B: 0, C: 256 },
-    TEST{ A: 0, B: 0, C: 0 },
-    JMP{ A: 0, sBx: 3 },
-    GETTABUP{ A: 0, B: 0, C: 256 },
-    GETTABUP{ A: 0, B: 0, C: 257 },
-    JMP{ A: 0, sBx: 2 },
-    GETTABUP{ A: 0, B: 0, C: 258 },
-    GETTABUP{ A: 0, B: 0, C: 259 },";
-    assert_code_eq(insts, &codegen.fs_ref().tpl.code);
   }
 
   #[test]
@@ -2051,21 +1921,6 @@ mod codegen_tests {
 
     let mut codegen = Codegen::new(symtab);
     codegen.prog(&ast).ok();
-
-    let insts = "
-    GETTABUP{ A: 0, B: 0, C: 256 },
-    TEST{ A: 0, B: 0, C: 0 },
-    JMP{ A: 0, sBx: 2 },
-    GETTABUP{ A: 0, B: 0, C: 256 },
-    JMP{ A: 0, sBx: 6 },
-    GETTABUP{ A: 0, B: 0, C: 257 },
-    TEST{ A: 0, B: 0, C: 0 },
-    JMP{ A: 0, sBx: 2 },
-    GETTABUP{ A: 0, B: 0, C: 258 },
-    JMP{ A: 0, sBx: 1 },
-    GETTABUP{ A: 0, B: 0, C: 259 },
-    GETTABUP{ A: 0, B: 0, C: 260 },";
-    assert_code_eq(insts, &codegen.fs_ref().tpl.code);
   }
 
   #[test]
@@ -2083,25 +1938,6 @@ mod codegen_tests {
 
     let mut codegen = Codegen::new(symtab);
     codegen.prog(&ast).ok();
-
-    let insts = "
-    SETTABUP{ A: 0, B: 257, C: 256 },
-    GETTABUP{ A: 2, B: 0, C: 257 },
-    GETTABUP{ A: 3, B: 0, C: 258 },
-    ADD{ A: 1, B: 2, C: 3 },
-    LT{ A: 1, B: 1, C: 259 },
-    LOADBOO{ A: 0, B: 1, C: 1 },
-    LOADBOO{ A: 0, B: 0, C: 0 },
-    TEST{ A: 0, B: 0, C: 0 },
-    JMP{ A: 0, sBx: 7 },
-    GETTABUP{ A: 1, B: 0, C: 257 },
-    GETTABUP{ A: 3, B: 0, C: 257 },
-    ADD{ A: 4, B: 3, C: 260 },
-    SETTABUP{ A: 0, B: 257, C: 4 },
-    GETTABUP{ A: 0, B: 0, C: 261 },
-    GETTABUP{ A: 0, B: 0, C: 262 },
-    JMP{ A: 0, sBx: -15 },";
-    assert_code_eq(insts, &codegen.fs_ref().tpl.code);
   }
 
   #[test]
@@ -2116,19 +1952,6 @@ mod codegen_tests {
 
     let mut codegen = Codegen::new(symtab);
     codegen.prog(&ast).ok();
-
-    let insts = "
-    SETTABUP{ A: 0, B: 257, C: 256 },
-    LOADBOO{ A: 0, B: 1, C: 0 },
-    TEST{ A: 0, B: 0, C: 0 },
-    JMP{ A: 0, sBx: 5 },
-    GETTABUP{ A: 1, B: 0, C: 257 },
-    GETTABUP{ A: 3, B: 0, C: 257 },
-    ADD{ A: 4, B: 3, C: 258 },
-    SETTABUP{ A: 0, B: 257, C: 4 },
-    JMP{ A: 0, sBx: -8 },
-    GETTABUP{ A: 0, B: 0, C: 259 },";
-    assert_code_eq(insts, &codegen.fs_ref().tpl.code);
   }
 
   #[test]
@@ -2143,14 +1966,6 @@ mod codegen_tests {
 
     let mut codegen = Codegen::new(symtab);
     codegen.prog(&ast).ok();
-
-    let insts = "
-    LOADBOO{ A: 0, B: 1, C: 0 },
-    TEST{ A: 0, B: 0, C: 0 },
-    JMP{ A: 0, sBx: 1 },
-    JMP{ A: 0, sBx: -4 },
-    GETTABUP{ A: 0, B: 0, C: 256 },";
-    assert_code_eq(insts, &codegen.fs_ref().tpl.code);
   }
 
   #[test]
@@ -2165,18 +1980,6 @@ mod codegen_tests {
 
     let mut codegen = Codegen::new(symtab);
     codegen.prog(&ast).ok();
-
-    let insts = "
-    GETTABUP{ A: 1, B: 0, C: 256 },
-    LT{ A: 1, B: 1, C: 257 },
-    LOADBOO{ A: 0, B: 0, C: 1 },
-    LOADBOO{ A: 0, B: 1, C: 0 },
-    TEST{ A: 0, B: 0, C: 0 },
-    JMP{ A: 0, sBx: 2 },
-    GETTABUP{ A: 0, B: 0, C: 256 },
-    JMP{ A: 0, sBx: -8 },
-    GETTABUP{ A: 0, B: 0, C: 256 },";
-    assert_code_eq(insts, &codegen.fs_ref().tpl.code);
   }
 
   #[test]
@@ -2191,20 +1994,6 @@ mod codegen_tests {
 
     let mut codegen = Codegen::new(symtab);
     codegen.prog(&ast).ok();
-
-    let insts = "
-    GETTABUP{ A: 1, B: 0, C: 256 },
-    GETTABUP{ A: 3, B: 0, C: 256 },
-    SUB{ A: 4, B: 3, C: 257 },
-    SETTABUP{ A: 0, B: 256, C: 4 },
-    GETTABUP{ A: 1, B: 0, C: 256 },
-    LT{ A: 1, B: 1, C: 258 },
-    LOADBOO{ A: 0, B: 0, C: 1 },
-    LOADBOO{ A: 0, B: 1, C: 0 },
-    TEST{ A: 0, B: 0, C: 0 },
-    JMP{ A: 0, sBx: -10 },
-    GETTABUP{ A: 0, B: 0, C: 256 },";
-    assert_code_eq(insts, &codegen.fs_ref().tpl.code);
   }
 
   #[test]
@@ -2227,28 +2016,6 @@ mod codegen_tests {
 
     let mut codegen = Codegen::new(symtab);
     codegen.prog(&ast).ok();
-
-    let insts = "
-    LOADBOO{ A: 0, B: 1, C: 0 },
-    TEST{ A: 0, B: 0, C: 0 },
-    JMP{ A: 0, sBx: 16 },
-    LOADBOO{ A: 0, B: 1, C: 0 },
-    TEST{ A: 0, B: 0, C: 0 },
-    JMP{ A: 0, sBx: 6 },
-    GETTABUP{ A: 0, B: 0, C: 256 },
-    TEST{ A: 0, B: 0, C: 0 },
-    JMP{ A: 0, sBx: 1 },
-    JMP{ A: 0, sBx: 2 },
-    LOADK{ A: 0, Bx: 257 },
-    JMP{ A: 0, sBx: -9 },
-    LOADK{ A: 0, Bx: 258 },
-    GETTABUP{ A: 0, B: 0, C: 259 },
-    TEST{ A: 0, B: 0, C: 0 },
-    JMP{ A: 0, sBx: 1 },
-    JMP{ A: 0, sBx: 2 },
-    LOADK{ A: 0, Bx: 260 },
-    JMP{ A: 0, sBx: -19 },";
-    assert_code_eq(insts, &codegen.fs_ref().tpl.code);
   }
 
   #[test]
@@ -2272,32 +2039,6 @@ mod codegen_tests {
 
     let mut codegen = Codegen::new(symtab);
     codegen.prog(&ast).ok();
-
-    let insts = "
-    GETTABUP{ A: 0, B: 0, C: 256 },
-    LOADBOO{ A: 0, B: 1, C: 0 },
-    TEST{ A: 0, B: 0, C: 0 },
-    JMP{ A: 0, sBx: 18 },
-    LOADBOO{ A: 0, B: 1, C: 0 },
-    TEST{ A: 0, B: 0, C: 0 },
-    JMP{ A: 0, sBx: 7 },
-    GETTABUP{ A: 0, B: 0, C: 257 },
-    TEST{ A: 0, B: 0, C: 0 },
-    JMP{ A: 0, sBx: 2 },
-    JMP{ A: 0, sBx: -7 },
-    JMP{ A: 0, sBx: 1 },
-    JMP{ A: 0, sBx: 1 },
-    JMP{ A: 0, sBx: -10 },
-    LOADK{ A: 0, Bx: 258 },
-    GETTABUP{ A: 0, B: 0, C: 256 },
-    TEST{ A: 0, B: 0, C: 0 },
-    JMP{ A: 0, sBx: 2 },
-    JMP{ A: 0, sBx: -18 },
-    JMP{ A: 0, sBx: 1 },
-    JMP{ A: 0, sBx: 1 },
-    JMP{ A: 0, sBx: -21 },
-    LOADK{ A: 0, Bx: 259 },";
-    assert_code_eq(insts, &codegen.fs_ref().tpl.code);
   }
 
   #[test]
@@ -2313,20 +2054,6 @@ mod codegen_tests {
 
     let mut codegen = Codegen::new(symtab);
     codegen.prog(&ast).ok();
-
-    let insts = "
-    GETTABUP{ A: 1, B: 0, C: 256 },
-    GETTABUP{ A: 2, B: 0, C: 257 },
-    GETTABUP{ A: 3, B: 0, C: 258 },
-    CALL{ A: 1, B: 3, C: 1 },
-    GETTABUP{ A: 1, B: 0, C: 256 },
-    GETTABUP{ A: 2, B: 0, C: 259 },
-    GETTABUP{ A: 3, B: 0, C: 257 },
-    GETTABUP{ A: 4, B: 0, C: 258 },
-    CALL{ A: 2, B: 3, C: 2 },
-    LOADK{ A: 3, Bx: 260 },
-    CALL{ A: 1, B: 3, C: 1 },";
-    assert_code_eq(insts, &codegen.fs_ref().tpl.code);
   }
 
   #[test]
@@ -2342,15 +2069,5 @@ mod codegen_tests {
 
     let mut codegen = Codegen::new(symtab);
     codegen.prog(&ast).ok();
-
-    let insts = "
-    GETTABUP{ A: 1, B: 0, C: 256 },
-    GETTABUP{ A: 2, B: 0, C: 257 },
-    GETTABUP{ A: 3, B: 0, C: 258 },
-    CALL{ A: 1, B: 3, C: 2 },
-    MOVE{ A: 0, B: 1, C: 0 },
-    RETURN{ A: 0, B: 2, C: 0 },
-    RETURN{ A: 0, B: 0, C: 0 },";
-    assert_code_eq(insts, &codegen.fs_ref().tpl.code);
   }
 }

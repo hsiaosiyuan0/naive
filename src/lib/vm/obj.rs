@@ -14,6 +14,7 @@ impl GcObj {
   }
 
   pub fn t_pri(&mut self) -> JsObjPtr {
+    // TODO:: call [[DefaultValue]] internal method
     as_obj(self).inc();
     as_obj_ptr(self)
   }
@@ -118,7 +119,7 @@ impl GcObj {
       if ta == GcObjKind::Number && tb == GcObjKind::String {
         let nb = gc.new_num(false);
         local_scope.reg(nb);
-        as_num(b).set_v_str(as_str(b));
+        as_num(nb).set_v_str(as_str(b));
         return as_num(a).eq(nb);
       }
       if ta == GcObjKind::String && tb == GcObjKind::Number {
@@ -151,5 +152,73 @@ impl GcObj {
       }
     }
     return false;
+  }
+
+  pub fn lt(a: JsObjPtr, b: JsObjPtr) -> bool {
+    let mut local_scope = LocalScope::new();
+    let gc = as_gc(as_obj(a).gc());
+
+    let pa = as_obj(a).t_pri();
+    local_scope.reg(a);
+
+    let pb = as_obj(b).t_pri();
+    local_scope.reg(b);
+
+    let ta = as_obj(pa).kind;
+    let tb = as_obj(pb).kind;
+
+    if !(ta == GcObjKind::String && tb == GcObjKind::String) {
+      let na = as_obj(pa).t_num();
+      local_scope.reg(na);
+      let nb = as_obj(pb).t_num();
+      local_scope.reg(nb);
+
+      // js spec says that if `na` above(`nx` in spec) is NAN then just return `undefined`
+      // I probably understand why, since compare NAN meaningless so return `undefined` looks sound,
+      // but I think just return `false` is only the intuitive way, here we just on the basis of
+      // what the CLua does - just return `false` to keep `LE` to return only one type value
+      if as_num(na).d.is_nan() {
+        // return gc.js_undef();
+        return false;
+      }
+      if as_num(nb).d.is_nan() {
+        // return gc.js_undef();
+        return false;
+      }
+      if as_num(na).d == as_num(nb).d {
+        return false;
+      }
+      if as_num(na).d < as_num(nb).d {
+        return true;
+      }
+      return false;
+    }
+
+    let sa = as_str(pa);
+    let sb = as_str(pb);
+    if sa.d.starts_with(sb.d.as_str()) {
+      return false;
+    }
+    if sb.d.starts_with(sa.d.as_str()) {
+      return true;
+    }
+
+    let cbs = sb.d.chars().collect::<Vec<_>>();
+    for ca in sa.d.chars().enumerate() {
+      let cb = *cbs.get(ca.0).unwrap();
+      if ca.1 < cb {
+        return true;
+      } else if ca.1 > cb {
+        return false;
+      }
+    }
+    return false;
+  }
+
+  pub fn le(a: JsObjPtr, b: JsObjPtr) -> bool {
+    if GcObj::lt(a, b) {
+      return true;
+    }
+    GcObj::eq(a, b)
   }
 }
