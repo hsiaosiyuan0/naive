@@ -6,6 +6,7 @@ use std::mem;
 use std::os::raw::c_void;
 use std::ptr::{drop_in_place, null_mut};
 
+#[derive(Debug)]
 pub struct RuntimeError {
   pub msg: String,
 }
@@ -58,7 +59,9 @@ impl CallInfo {
     if !self.this.is_null() {
       as_obj(self.this).dec();
     }
-    as_obj(this).inc();
+    if !this.is_null() {
+      as_obj(this).inc();
+    }
     self.this = this;
   }
 }
@@ -200,7 +203,7 @@ impl Vm {
     Ok(code.get(pc))
   }
 
-  fn exec(&mut self) -> Result<(), RuntimeError> {
+  pub fn exec(&mut self) -> Result<(), RuntimeError> {
     loop {
       let i = match self.fetch() {
         Err(e) => return Err(e),
