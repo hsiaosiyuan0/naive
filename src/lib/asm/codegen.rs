@@ -474,26 +474,6 @@ fn assign_upval(fs: &mut FnState, from_reg: u32, to_name: &str) -> Inst {
   }
 }
 
-//fn load_upval(fs: &mut FnState, from_name: &str, to_reg: u32) -> Inst {
-//  let has_def = fs.add_upval(from_name);
-//  if has_def {
-//    let mut inst = Inst::new();
-//    inst.set_op(OpCode::GETUPVAL);
-//    inst.set_a(to_reg);
-//    inst.set_b(fs.get_upval(from_name).unwrap().idx);
-//    inst
-//  } else {
-//    let mut inst = Inst::new();
-//    inst.set_op(OpCode::GETTABUP);
-//    inst.set_a(to_reg);
-//    inst.set_b(fs.get_upval(ENV_NAME).unwrap().idx);
-//    let kst = Const::String(from_name.to_string());
-//    fs.add_const(&kst);
-//    inst.set_c(kst_id_rk(fs.const2idx(&kst)));
-//    inst
-//  }
-//}
-
 fn pop_last_loadk(fs: &mut FnState) -> Option<u32> {
   let last_inst = fs.tpl.code.last().unwrap();
   let last_op = OpCode::from_u32(last_inst.op());

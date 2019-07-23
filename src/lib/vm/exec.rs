@@ -477,6 +477,47 @@ impl Vm {
         ls.reg(v);
         self.set_stack_slot(as_ci(self.ci).base + i.a(), as_obj_ptr(v));
       }
+      OpCode::NEWTABLE => {
+        let mut ls = LocalScope::new();
+        let base = as_ci(self.ci).base;
+        let v = self.gc.new_dict(false);
+        ls.reg(v);
+        self.set_stack_slot(base + i.a(), as_obj_ptr(v));
+      }
+      OpCode::SETTABLE => {
+        let mut ls = LocalScope::new();
+        let base = as_ci(self.ci).base;
+        let tb = self.get_stack_item(base + i.a());
+        if !as_obj(tb).check_coercible() {
+          panic!("TypeError")
+        }
+        let tb = as_dict(tb);
+        let (k, is_new) = self.x_rk(base, i.b());
+        if is_new {
+          ls.reg(k);
+        }
+        let (v, is_new) = self.x_rk(base, i.c());
+        if is_new {
+          ls.reg(v);
+        }
+        tb.set(k, v);
+      }
+      OpCode::GETTABLE => {
+        let mut ls = LocalScope::new();
+        let base = as_ci(self.ci).base;
+        let tb = self.get_stack_item(base + i.b());
+        if !as_obj(tb).check_coercible() {
+          panic!("TypeError")
+        }
+        // TODO:: dispatch to various prop resolve handler(number, string, array)
+        let tb = as_dict(tb);
+        let (k, is_new) = self.x_rk(base, i.c());
+        if is_new {
+          ls.reg(k);
+        }
+        let v = tb.get(k);
+        self.set_stack_slot(base + i.a(), v);
+      }
       OpCode::RETURN => {
         let b = i.b();
         let ret_num = b - 1;
@@ -490,7 +531,11 @@ impl Vm {
       OpCode::CALL => {
         let fi = as_ci(self.ci).base + i.a();
         let fp = self.get_stack_item(fi);
-        assert_eq!(as_obj(fp).kind, GcObjKind::Function, "undue call");
+        assert_eq!(
+          as_obj(fp).kind,
+          GcObjKind::Function,
+          "Uncaught TypeError: not a function"
+        );
         let f = as_fun(fp);
 
         let ci = CallInfo::new();
@@ -855,6 +900,21 @@ mod exec_tests {
     ",
     );
 
+    let mut vm = new_vm(chk);
+    vm.exec();
+  }
+
+  #[test]
+  fn object_literal_test() {
+    let chk = Codegen::gen(
+      "
+      var a = { b: 1, c: {d: '1'} }
+      assert_num_eq(1, a.b);
+      assert_str_eq('1', a.c.d)
+    ",
+    );
+
+    println!("{:#?}", chk);
     let mut vm = new_vm(chk);
     vm.exec();
   }

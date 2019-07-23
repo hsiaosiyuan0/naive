@@ -310,6 +310,7 @@ pub struct JsFunction {
   pub f: *const c_void,
   pub is_native: bool,
   pub upvals: Vec<UpValPtr>,
+  pub prototype: JsObjPtr,
 }
 
 fn js_fun_deinit(ptr: JsObjPtr) {
@@ -336,6 +337,7 @@ impl JsFunction {
       f: null(),
       is_native: false,
       upvals: vec![],
+      prototype: null_mut(),
     }));
     gc.register(as_obj_ptr(ptr), is_root);
     ptr

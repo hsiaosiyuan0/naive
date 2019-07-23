@@ -10,6 +10,13 @@ impl GcObj {
     }
   }
 
+  pub fn check_coercible(&self) -> bool {
+    match self.kind {
+      GcObjKind::Undef | GcObjKind::Null => false,
+      _ => true,
+    }
+  }
+
   pub fn x_pass_by_value(&mut self) -> JsObjPtr {
     let gc = as_gc(self.gc());
     match self.kind {
