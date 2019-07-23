@@ -510,12 +510,16 @@ impl Vm {
           }
           self.post_call(i.c() - 1);
         } else {
-          // pass args
+          let mut ls = LocalScope::new();
           let n_args = i.b() - 1;
           let r_arg = as_ci(self.ci).fun + 1;
           let t_arg = as_ci(self.ci).base;
           for i in 0..n_args {
-            let v = self.get_stack_item(r_arg + i);
+            let mut v = self.get_stack_item(r_arg + i);
+            if as_obj(v).pass_by_value() {
+              v = as_obj(v).x_pass_by_value();
+              ls.reg(v);
+            }
             self.set_stack_slot(t_arg + i, v);
           }
           self.exec();
@@ -831,6 +835,23 @@ mod exec_tests {
     }
     var a = f(1, 10)
     assert_num_eq(55, a)
+    ",
+    );
+
+    let mut vm = new_vm(chk);
+    vm.exec();
+  }
+
+  #[test]
+  fn pass_by_value_test() {
+    let chk = Codegen::gen(
+      "
+    function f(a) {
+       a += 1
+    }
+    var a = 1
+    f(a)
+    assert_num_eq(1, a)
     ",
     );
 

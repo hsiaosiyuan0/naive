@@ -3,6 +3,30 @@ use std::f64;
 use std::ptr::eq;
 
 impl GcObj {
+  pub fn pass_by_value(&self) -> bool {
+    match self.kind {
+      GcObjKind::String | GcObjKind::Number => true,
+      _ => false,
+    }
+  }
+
+  pub fn x_pass_by_value(&mut self) -> JsObjPtr {
+    let gc = as_gc(self.gc());
+    match self.kind {
+      GcObjKind::String => {
+        let v = gc.new_str(false);
+        as_str(v).d = as_str(self).d.clone();
+        as_obj_ptr(v)
+      }
+      GcObjKind::Number => {
+        let v = gc.new_num(false);
+        as_num(v).d = as_num(self).d;
+        as_obj_ptr(v)
+      }
+      _ => panic!(),
+    }
+  }
+
   pub fn eqs_true(&mut self) -> bool {
     self.kind == GcObjKind::Boolean && as_bool(self).d
   }
