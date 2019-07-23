@@ -53,6 +53,22 @@ impl CallInfo {
       this: null_mut(),
     }))
   }
+
+  pub fn set_this(&mut self, this: JsObjPtr) {
+    if !self.this.is_null() {
+      as_obj(self.this).dec();
+    }
+    as_obj(this).inc();
+    self.this = this;
+  }
+}
+
+impl Drop for CallInfo {
+  fn drop(&mut self) {
+    if !self.this.is_null() {
+      as_obj(self.this).dec();
+    }
+  }
 }
 
 pub enum RKValue {
@@ -98,6 +114,7 @@ fn print_obj(vm: VmPtr) {
     GcObjKind::Undef => println!("undefined"),
     GcObjKind::Number => println!("{:#?}", as_num(*arg).d),
     GcObjKind::String => println!("{:#?}", as_str(*arg).d),
+    GcObjKind::Function => println!("{:#?}", as_fun(*arg)),
     _ => (),
   });
 }
@@ -521,6 +538,9 @@ impl Vm {
         }
         let v = tb.get(k);
         self.set_stack_slot(base + i.a(), v);
+
+        // set this for calling function on object
+        as_ci(self.ci).set_this(as_obj_ptr(tb));
       }
       OpCode::RETURN => {
         let b = i.b();
@@ -552,6 +572,7 @@ impl Vm {
         as_ci(ci).prev = self.ci;
         let cci = self.ci;
         as_ci(cci).next = ci;
+        as_ci(ci).set_this(as_ci(cci).this);
         self.ci = ci;
 
         if f.is_native {
@@ -621,7 +642,8 @@ impl Vm {
           }
           self.set_stack_slot(t_arg + i, v);
         }
-        as_ci(self.ci).this = as_obj_ptr(this);
+
+        as_ci(self.ci).set_this(as_obj_ptr(this));
         as_ci(self.ci).is_new = true;
         self.exec();
       }
@@ -988,6 +1010,27 @@ mod exec_tests {
     ",
     );
 
+    let mut vm = new_vm(chk);
+    vm.exec();
+  }
+
+  #[test]
+  fn member_access_chain_test() {
+    let chk = Codegen::gen(
+      "
+      var a = {
+        b: {
+          v: 1
+          f: function () {
+            return this.v
+          }
+        }
+      };
+      assert_num_eq(1, a.b.f());
+    ",
+    );
+
+    println!("{:#?}", chk);
     let mut vm = new_vm(chk);
     vm.exec();
   }
