@@ -846,7 +846,43 @@ impl AstVisitor<(), CodegenError> for Codegen {
   }
 
   fn new_expr(&mut self, expr: &NewExpr) -> Result<(), CodegenError> {
-    unimplemented!()
+    let fs = self.fs_ref();
+    let mut tmp_regs = vec![];
+    let (res_reg, is_tmp) = fs.pop_res_reg();
+    if is_tmp {
+      tmp_regs.push(res_reg)
+    }
+
+    let a = fs.take_reg();
+    fs.push_res_reg(a);
+    self.expr(&expr.callee).ok();
+    tmp_regs.push(a);
+
+    expr.arguments.iter().for_each(|arg| {
+      let r = fs.take_reg();
+      fs.push_res_reg(r);
+      self.expr(arg).ok();
+      tmp_regs.push(r);
+    });
+
+    let mut call = Inst::new();
+    call.set_op(OpCode::NEW);
+    call.set_a(a);
+    call.set_b((expr.arguments.len() + 1) as u32);
+
+    let ret_num = if is_tmp { 1 } else { 2 };
+    call.set_c(ret_num);
+    fs.push_inst(call);
+
+    if !is_tmp && a != res_reg {
+      let mut mov = Inst::new();
+      mov.set_op(OpCode::MOVE);
+      mov.set_a(res_reg);
+      mov.set_b(a);
+      fs.push_inst(mov);
+    }
+    fs.free_regs(&tmp_regs);
+    Ok(())
   }
 
   fn call_expr(&mut self, expr: &CallExpr) -> Result<(), CodegenError> {
@@ -1233,7 +1269,18 @@ impl AstVisitor<(), CodegenError> for Codegen {
   }
 
   fn this_expr(&mut self, expr: &ThisExprData) -> Result<(), CodegenError> {
-    unimplemented!()
+    let fs = self.fs_ref();
+    let mut tmp_regs = vec![];
+    let (res_reg, is_tmp) = fs.pop_res_reg();
+    if is_tmp {
+      tmp_regs.push(res_reg)
+    }
+    let mut this = Inst::new();
+    this.set_op(OpCode::THIS);
+    this.set_a(res_reg);
+    fs.push_inst(this);
+    fs.free_regs(&tmp_regs);
+    Ok(())
   }
 
   fn id_expr(&mut self, expr: &IdData) -> Result<(), CodegenError> {

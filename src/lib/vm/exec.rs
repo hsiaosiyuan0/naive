@@ -35,6 +35,8 @@ pub struct CallInfo {
   base: u32,
   is_native: bool,
   open_upvals: HashMap<u32, UpValPtr>,
+  is_new: bool,
+  this: JsObjPtr,
 }
 
 impl CallInfo {
@@ -47,6 +49,8 @@ impl CallInfo {
       base: 0,
       is_native: false,
       open_upvals: HashMap::new(),
+      is_new: false,
+      this: null_mut(),
     }))
   }
 }
@@ -520,9 +524,12 @@ impl Vm {
       }
       OpCode::RETURN => {
         let b = i.b();
-        let ret_num = b - 1;
-        assert!(ret_num <= 1);
-        if ret_num == 1 {
+        let mut ret_num = b - 1;
+        if as_ci(self.ci).is_new {
+          ret_num = 1;
+          let ret = as_ci(self.ci).this;
+          self.set_stack_slot(as_ci(self.ci).fun, ret);
+        } else if ret_num == 1 {
           let ret = self.get_stack_item(as_ci(self.ci).base + i.a());
           self.set_stack_slot(as_ci(self.ci).fun, ret);
         }
@@ -569,6 +576,54 @@ impl Vm {
           }
           self.exec();
         }
+      }
+      OpCode::THIS => {
+        let base = as_ci(self.ci).base;
+        let this = as_ci(self.ci).this;
+        self.set_stack_slot(base + i.a(), this);
+      }
+      OpCode::NEW => {
+        let fi = as_ci(self.ci).base + i.a();
+        let fp = self.get_stack_item(fi);
+        assert_eq!(
+          as_obj(fp).kind,
+          GcObjKind::Function,
+          "Uncaught TypeError: not a function"
+        );
+        let f = as_fun(fp);
+
+        let ci = CallInfo::new();
+        as_ci(ci).fun = fi;
+        as_ci(ci).base = fi + i.b();
+
+        as_ci(ci).prev = self.ci;
+        let cci = self.ci;
+        as_ci(cci).next = ci;
+        self.ci = ci;
+
+        // we'll implement this later
+        if f.is_native {
+          unimplemented!()
+        }
+
+        let mut ls = LocalScope::new();
+        let this = self.gc.new_dict(false);
+        ls.reg(this);
+
+        let n_args = i.b() - 1;
+        let r_arg = as_ci(self.ci).fun + 1;
+        let t_arg = as_ci(self.ci).base;
+        for i in 0..n_args {
+          let mut v = self.get_stack_item(r_arg + i);
+          if as_obj(v).pass_by_value() {
+            v = as_obj(v).x_pass_by_value();
+            ls.reg(v);
+          }
+          self.set_stack_slot(t_arg + i, v);
+        }
+        as_ci(self.ci).this = as_obj_ptr(this);
+        as_ci(self.ci).is_new = true;
+        self.exec();
       }
       // TODO::
       _ => (),
@@ -915,6 +970,24 @@ mod exec_tests {
     );
 
     println!("{:#?}", chk);
+    let mut vm = new_vm(chk);
+    vm.exec();
+  }
+
+  #[test]
+  fn new_object_test() {
+    let chk = Codegen::gen(
+      "
+      var Person = function (name, age) {
+        this.name = name
+        this.age = age
+      }
+      var obj = new Person('tom', 20)
+      assert_str_eq('tom', obj.name)
+      assert_num_eq(20, obj.age);
+    ",
+    );
+
     let mut vm = new_vm(chk);
     vm.exec();
   }
