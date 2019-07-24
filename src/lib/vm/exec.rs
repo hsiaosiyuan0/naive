@@ -994,7 +994,6 @@ mod exec_tests {
     ",
     );
 
-    println!("{:#?}", chk);
     let mut vm = new_vm(chk);
     vm.exec();
   }
@@ -1033,7 +1032,30 @@ mod exec_tests {
     ",
     );
 
-    println!("{:#?}", chk);
+    let mut vm = new_vm(chk);
+    vm.exec();
+  }
+
+  #[test]
+  fn logic_test() {
+    let chk = Codegen::gen(
+      "
+      var a = 1
+      var b = 2
+      var c = a && b
+      assert_num_eq(2, c);
+
+      var d = 0
+      var e = a && d
+      assert_num_eq(0, e);
+
+      var f = d || b
+      var g = d && a
+      assert_num_eq(2, f);
+      assert_num_eq(0, g);
+    ",
+    );
+
     let mut vm = new_vm(chk);
     vm.exec();
   }

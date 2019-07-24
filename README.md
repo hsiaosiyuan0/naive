@@ -25,7 +25,8 @@ This is a naive JavaScript engine implemented in pure Rust to improve my JavaScr
 * [x] Closure
 * [x] Mathematical Operations
 * [x] Function Invocation
-* [ ] Logical Operations
+* [x] Logical Operations
+* [ ] Bitwise Operations
 * [x] Object Literal
 * [x] New Expression
 * [x] Member Access Expression
