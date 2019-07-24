@@ -32,7 +32,7 @@ This is a naive JavaScript engine implemented in pure Rust to improve my JavaScr
 * [x] Member Access Expression
 * [ ] For-in Statement
 * [ ] Switch Case Statement
-* [ ] Try Cache Statement
+* [ ] Try-catch Statement
 * [ ] Debug
 
 ## How to run
