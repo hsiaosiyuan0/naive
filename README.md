@@ -20,7 +20,7 @@ This is a naive JavaScript engine implemented in pure Rust to improve my JavaScr
 
 ### VM
 
-* [x] Reference-counting and Mark-and-Sweep to deal with the reference cycle
+* [x] Reference-counting GC with Mark-and-Sweep to deal with the reference cycle
 * [x] Common Flow Control Statements(if-else, for, while, do-while)
 * [x] Closure
 * [x] Mathematical Operations
